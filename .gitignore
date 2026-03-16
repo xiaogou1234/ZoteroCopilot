@@ -1,0 +1,64 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+src/zotero_mcp/__pycache__/
+tests/__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+dist-*/
+build/
+build-*/
+release-local/
+*.xpi
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env
+.venv/
+.venv-*/
+
+# Testing
+.pytest_cache/
+.pytest_tmp/
+.pytest-tmp/
+.coverage
+htmlcov/
+*.err.log
+*.out.log
+mcp-e2e.log
+.tmp/
+.tmp-*/
+.sandbox-home/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Lock files
+uv.lock
+
+# Local project docs
+CLAUDE.md
+.claude/
+
+# Local plugin artifacts
+zotero-test-imports/
+zotero-test-buffer/

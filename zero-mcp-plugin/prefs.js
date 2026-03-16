@@ -1,0 +1,12 @@
+pref("extensions.zeroMcpPlugin.mutationsEnabled", true);
+pref("extensions.zeroMcpPlugin.sharedSecret", "");
+pref("extensions.zeroMcpPlugin.bufferDirectory", "");
+pref("extensions.zeroMcpPlugin.localMcpPort", "8000");
+pref("extensions.zeroMcpPlugin.importRoots", "[]");
+pref("extensions.zeroMcpPlugin.defaultLinkMode", "imported_file");
+pref("extensions.zeroMcpPlugin.defaultDuplicatePolicy", "add_existing_to_collection");
+pref("extensions.zeroMcpPlugin.autoStartMcp", true);
+pref("extensions.zeroMcpPlugin.keepHelperRunning", true);
+pref("extensions.zeroMcpPlugin.mcpExecutablePath", "");
+pref("extensions.zeroMcpPlugin.mcpManagedPid", "");
+pref("extensions.zeroMcpPlugin.mcpManagedByPlugin", false);

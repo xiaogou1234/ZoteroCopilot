@@ -1,0 +1,211 @@
+<vbox
+  id="zero-mcp-plugin-preferences-root"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  flex="1"
+  style="padding: 14px 16px 20px;"
+  onload="ZeroMcpPluginPreferences.init()"
+>
+  <groupbox style="margin: 0 0 16px; padding: 14px 16px;">
+    <html:div style="font-size: 16px; font-weight: 700; margin: 0 0 8px; color: #222;">
+      开始使用
+    </html:div>
+
+    <label value="MCP 驱动器路径" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <html:input
+        id="zero-mcp-plugin-mcp-executable-path"
+        type="text"
+        placeholder="请选择 MCP 驱动器的路径"
+        onchange="ZeroMcpPluginPreferences.saveMcpExecutablePath()"
+        onblur="ZeroMcpPluginPreferences.saveMcpExecutablePath()"
+        style="flex: 1; min-width: 0; box-sizing: border-box; padding: 4px 6px;"
+      />
+      <button
+        id="zero-mcp-plugin-choose-mcp-executable-path"
+        label="选择文件"
+        oncommand="ZeroMcpPluginPreferences.chooseMcpExecutablePath()"
+        style="margin-left: 8px;"
+      ></button>
+      <button
+        id="zero-mcp-plugin-reset-mcp-executable-path"
+        label="清空"
+        oncommand="ZeroMcpPluginPreferences.resetMcpExecutablePath()"
+        style="margin-left: 8px;"
+      ></button>
+    </hbox>
+    <description style="margin: 0 0 12px; color: #666;">
+      请选择你已经安装好的 `zotero-mcp.exe` 文件。
+    </description>
+
+    <label value="客户端配置" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <button
+        id="zero-mcp-plugin-copy-codex-config"
+        label="复制 Codex 配置"
+        oncommand="ZeroMcpPluginPreferences.copyCodexConfig()"
+        style="margin-right: 8px;"
+      ></button>
+      <button
+        id="zero-mcp-plugin-copy-claude-code-config"
+        label="复制 Claude Code 配置"
+        oncommand="ZeroMcpPluginPreferences.copyClaudeCodeConfig()"
+      ></button>
+    </hbox>
+    <spacer style="height: 6px;"></spacer>
+
+    <label value="连接检测" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <button
+        id="zero-mcp-plugin-test-mcp"
+        label="测试连接"
+        oncommand="ZeroMcpPluginPreferences.testMcpConnection()"
+      ></button>
+    </hbox>
+    <description id="zero-mcp-plugin-test-mcp-status" style="margin: 0; color: #555;"></description>
+  </groupbox>
+
+  <groupbox style="margin: 0 0 16px; padding: 14px 16px;">
+    <html:div style="font-size: 16px; font-weight: 700; margin: 0 0 8px; color: #222;">
+      常用设置
+    </html:div>
+
+    <label value="文件缓冲目录" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <html:input
+        id="zero-mcp-plugin-buffer-directory"
+        type="text"
+        onchange="ZeroMcpPluginPreferences.saveBufferDirectory()"
+        onblur="ZeroMcpPluginPreferences.saveBufferDirectory()"
+        style="flex: 1; min-width: 0; box-sizing: border-box; padding: 4px 6px;"
+      />
+      <button
+        id="zero-mcp-plugin-choose-buffer-directory"
+        label="选择目录"
+        oncommand="ZeroMcpPluginPreferences.chooseBufferDirectory()"
+        style="margin-left: 8px;"
+      ></button>
+      <button
+        id="zero-mcp-plugin-reset-buffer-directory"
+        label="恢复默认"
+        oncommand="ZeroMcpPluginPreferences.resetBufferDirectory()"
+        style="margin-left: 8px;"
+      ></button>
+    </hbox>
+    <description style="margin: 0 0 12px; color: #666;">
+      导入 PDF 时会先把文件复制到这里，再导入 Zotero。
+    </description>
+
+    <checkbox
+      id="zero-mcp-plugin-mutations-enabled"
+      label="允许写入 Zotero"
+      oncommand="ZeroMcpPluginPreferences.saveMutationsEnabled()"
+      style="margin: 0 0 12px;"
+    ></checkbox>
+
+    <label value="默认 PDF 导入方式" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <menulist id="zero-mcp-plugin-default-link-mode" oncommand="ZeroMcpPluginPreferences.saveDefaultLinkMode()">
+      <menupopup>
+        <menuitem label="复制到 Zotero 存储" value="imported_file"></menuitem>
+        <menuitem label="保留原文件位置" value="linked_file"></menuitem>
+      </menupopup>
+    </menulist>
+    <description style="margin: 6px 0 12px; color: #666;">
+      一般建议使用“复制到 Zotero 存储”。
+    </description>
+
+    <label value="发现重复时" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <menulist
+      id="zero-mcp-plugin-default-duplicate-policy"
+      oncommand="ZeroMcpPluginPreferences.saveDefaultDuplicatePolicy()"
+    >
+      <menupopup>
+        <menuitem label="加入现有条目所在集合" value="add_existing_to_collection"></menuitem>
+        <menuitem label="跳过" value="skip"></menuitem>
+        <menuitem label="追加为现有条目的附件" value="attach_to_existing"></menuitem>
+        <menuitem label="报错" value="error"></menuitem>
+      </menupopup>
+    </menulist>
+    <description style="margin: 6px 0 12px; color: #666;">
+      推荐保留默认值，避免重复导入时中断流程。
+    </description>
+
+    <checkbox
+      id="zero-mcp-plugin-auto-start-mcp"
+      label="打开 Zotero 时自动启动 MCP"
+      oncommand="ZeroMcpPluginPreferences.saveAutoStartMcp()"
+      style="margin: 0;"
+    ></checkbox>
+  </groupbox>
+
+  <groupbox style="margin: 0; padding: 14px 16px;">
+    <html:div style="font-size: 16px; font-weight: 700; margin: 0 0 8px; color: #222;">
+      高级设置
+    </html:div>
+
+    <label value="服务端口" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <html:input
+        id="zero-mcp-plugin-local-mcp-port"
+        type="number"
+        min="1"
+        max="65535"
+        step="1"
+        onchange="ZeroMcpPluginPreferences.saveLocalMcpPort()"
+        onblur="ZeroMcpPluginPreferences.saveLocalMcpPort()"
+        style="width: 140px; box-sizing: border-box; padding: 4px 6px;"
+      />
+      <button
+        id="zero-mcp-plugin-reset-local-mcp-port"
+        label="恢复默认端口"
+        oncommand="ZeroMcpPluginPreferences.resetLocalMcpPort()"
+        style="margin-left: 8px;"
+      ></button>
+    </hbox>
+    <description style="margin: 0 0 12px; color: #666;">
+      修改端口后，记得重新复制客户端配置。
+    </description>
+
+    <label value="访问令牌" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <html:input
+      id="zero-mcp-plugin-shared-secret"
+      type="text"
+      readonly="readonly"
+      style="width: 100%; box-sizing: border-box; padding: 4px 6px;"
+    />
+    <description style="margin: 6px 0 0; color: #666;">
+      访问令牌用于保护写入接口，避免本机其他进程随意修改 Zotero。
+    </description>
+    <hbox align="center" style="margin: 8px 0 12px;">
+      <button
+        id="zero-mcp-plugin-generate-secret"
+        label="生成新令牌"
+        oncommand="ZeroMcpPluginPreferences.regenerateSecret()"
+      ></button>
+    </hbox>
+    <description id="zero-mcp-plugin-token-action-status" style="margin: 0 0 12px; color: #555;"></description>
+
+    <checkbox
+      id="zero-mcp-plugin-keep-helper-running"
+      label="保持 MCP 常驻运行"
+      oncommand="ZeroMcpPluginPreferences.saveKeepHelperRunning()"
+      style="margin: 0 0 12px;"
+    ></checkbox>
+
+    <label value="手动控制" style="margin: 0 0 4px; font-weight: 700;"></label>
+    <hbox align="center" style="margin: 0 0 6px;">
+      <button
+        id="zero-mcp-plugin-start-mcp"
+        label="启动 MCP 服务"
+        oncommand="ZeroMcpPluginPreferences.startMcpService()"
+        style="margin-right: 8px;"
+      ></button>
+      <button
+        id="zero-mcp-plugin-stop-mcp"
+        label="关闭 MCP 服务"
+        oncommand="ZeroMcpPluginPreferences.stopMcpService()"
+      ></button>
+    </hbox>
+    <description id="zero-mcp-plugin-service-action-status" style="margin: 0 0 6px; color: #555;"></description>
+  </groupbox>
+</vbox>
