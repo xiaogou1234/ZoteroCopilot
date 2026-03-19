@@ -2,18 +2,6 @@
 
 ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for working with a local Zotero library from MCP clients.
 
-## Status
-
-- Repository version: `0.3.0`
-- Python package / helper version: `0.3.0`
-- Zotero plugin version: `0.3.0`
-- Zotero plugin artifacts:
-  - `dist/plugins/zotero_copilot_0.3.0_zotero7_plugin.xpi`
-  - `dist/plugins/zotero_copilot_0.3.0_zotero8_plugin.xpi`
-- Public helper artifacts:
-  - `dist/releases/zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
-  - `dist/releases/zotero_copilot_0.3.0_helper_windows_x64.zip`
-
 ## What It Does
 
 - Search the local Zotero library by keyword, tag, collection, notes, and recent items
@@ -29,15 +17,6 @@ ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for workin
   - batch tag updates
 
 Semantic search and vector-database tooling were removed in `0.3.0`. The `search` wrapper now performs keyword search over the local library.
-
-## Downloads
-
-Prebuilt plugin and helper packages should be published on the [GitHub Releases page](https://github.com/xiaogou1234/ZoteroCopilot/releases).
-
-- [Open the download page](https://github.com/xiaogou1234/ZoteroCopilot/releases)
-- [End-user install guide](docs/getting-started.md)
-
-If the current version has not been published as a release yet, follow the source-install path below.
 
 ## Installation
 
