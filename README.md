@@ -18,8 +18,8 @@ ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for workin
    - `zotero_copilot_0.3.0_zotero7_plugin.xpi`
    - `zotero_copilot_0.3.0_zotero8_plugin.xpi`
 3. Download the helper archive for your platform:
-   - macOS: `zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
-   - Windows: `zotero_copilot_0.3.0_helper_windows_x64.zip`
+   - macOS 11+ (Apple Silicon, `arm64`): `zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
+   - Windows 10+ (`x64`): `zotero_copilot_0.3.0_helper_windows_x64.zip`
 4. In Zotero, open the add-ons view, choose `Install Add-on From File...`, and install the matching XPI.
 5. Extract the helper archive and keep the whole extracted directory intact.
 6. In Zotero Copilot preferences, select the helper executable inside the extracted directory.

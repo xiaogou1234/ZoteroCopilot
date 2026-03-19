@@ -18,8 +18,8 @@ ZoteroCopilot 是一个面向本地 Zotero 文库的 MCP 适配层与 Zotero 桌
    - `zotero_copilot_0.3.0_zotero7_plugin.xpi`
    - `zotero_copilot_0.3.0_zotero8_plugin.xpi`
 3. 下载与你平台匹配的 helper 归档：
-   - macOS：`zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
-   - Windows：`zotero_copilot_0.3.0_helper_windows_x64.zip`
+   - macOS 11+（Apple Silicon，`arm64`）：`zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
+   - Windows 10+（`x64`）：`zotero_copilot_0.3.0_helper_windows_x64.zip`
 4. 在 Zotero 的插件管理界面选择“Install Add-on From File...”，安装对应的 XPI。
 5. 完整解压 helper 归档，不要只拿出单个可执行文件。
 6. 在 Zotero Copilot 偏好设置中选择解压目录里的 helper 可执行文件。
