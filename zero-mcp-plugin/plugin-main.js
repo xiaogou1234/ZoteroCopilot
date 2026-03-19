@@ -1,6 +1,6 @@
 var ENDPOINT_BASE = "/zero-mcp";
 var PREF_BRANCH = "extensions.zeroMcpPlugin.";
-var PLUGIN_VERSION = "0.1.1";
+var PLUGIN_VERSION = "0.3.0";
 
 var registeredEndpointPaths = [];
 var writeQueue = Promise.resolve();
@@ -32,12 +32,18 @@ var SUPPORTED_DUPLICATE_POLICIES = [
   "add_existing_to_collection",
   "skip",
 ];
+var HELPER_MONITOR_INTERVAL_MS = 4000;
+var helperOperationQueue = Promise.resolve();
+var helperRuntimeState = createDefaultHelperRuntimeState();
 
 ZeroMcpPlugin = {
   id: null,
   version: null,
   rootURI: null,
   initialized: false,
+  _helperMonitorTimer: null,
+  _shuttingDown: false,
+  _shutdownPromise: null,
 
   init({ id, version, rootURI }) {
     if (this.initialized) {
@@ -50,25 +56,189 @@ ZeroMcpPlugin = {
     PLUGIN_VERSION = this.version;
   },
 
+  log(message) {
+    ZeroMcpPluginCommon.log("plugin", message);
+  },
+
   async startup() {
     ensureOperationalDefaults();
     registerEndpoints();
-    await maybeAutoStartMcp(this);
+    this._shuttingDown = false;
+    this.attachToMainWindow();
+    this.startHelperMonitor();
+    try {
+      await this.ensureHelperForCurrentConfig("zotero-startup");
+    } catch (error) {
+      ZeroMcpPluginCommon.logError(error);
+    }
   },
 
-  onMainWindowLoad({ window }) {},
+  onMainWindowLoad({ window }) {
+    attachPluginControllerToWindow(window);
+  },
 
-  onMainWindowUnload({ window }) {},
+  onMainWindowUnload({ window }) {
+    detachPluginControllerFromWindow(window);
+  },
 
-  shutdown() {
-    if (getPrefsBranch().getBoolPref("mcpManagedByPlugin", false) && !getKeepHelperRunning()) {
-      stopManagedMcpProcesses(getMcpExecutablePath());
-      getPrefsBranch().setBoolPref("mcpManagedByPlugin", false);
+  attachToMainWindow() {
+    try {
+      if (typeof Zotero !== "undefined" && Zotero && typeof Zotero.getMainWindow === "function") {
+        let mainWindow = Zotero.getMainWindow();
+        if (mainWindow) {
+          attachPluginControllerToWindow(mainWindow);
+        }
+      }
+    } catch (error) {}
+  },
+
+  detachFromMainWindow() {
+    try {
+      if (typeof Zotero !== "undefined" && Zotero && typeof Zotero.getMainWindow === "function") {
+        let mainWindow = Zotero.getMainWindow();
+        if (mainWindow) {
+          detachPluginControllerFromWindow(mainWindow);
+        }
+      }
+    } catch (error) {}
+  },
+
+  getHelperRuntimeState() {
+    return cloneJSON(buildHelperRuntimeStateSnapshot());
+  },
+
+  async refreshHelperRuntimeState(reason) {
+    return this._runHelperOperation(() => refreshHelperRuntimeState(reason || "manual-refresh"));
+  },
+
+  async ensureHelperForCurrentConfig(reason, options) {
+    return this._runHelperOperation(() =>
+      ensureHelperForCurrentConfig(reason || "manual-ensure", options || {})
+    );
+  },
+
+  async restartHelperForConfigChange(changeType, nextConfig, previousConfig) {
+    return this._runHelperOperation(() =>
+      restartHelperForConfigChange(changeType, nextConfig || {}, previousConfig || {})
+    );
+  },
+
+  async applyExecutablePathChange(nextPath) {
+    return this._runHelperOperation(async () => {
+      let previous = buildHelperConfigSnapshot();
+      let normalizedPath = String(nextPath || "").trim();
+      setStringPref("mcpExecutablePath", normalizedPath);
+      let current = buildHelperConfigSnapshot({ executablePath: normalizedPath });
+
+      if (!normalizedPath) {
+        try {
+          await stopManagedHelper("helper-path-cleared", { config: previous });
+        } catch (error) {
+          ZeroMcpPluginCommon.logError(error);
+        }
+        clearManagedHelperState();
+        updateHelperRuntimeState({
+          helperState: "idle",
+          statusMessageKey: "helper-path-missing",
+          lastErrorCode: "",
+          config: current,
+        });
+        return buildHelperRuntimeStateSnapshot();
+      }
+
+      if (!previous.executablePath) {
+        return ensureHelperForCurrentConfig("helper-path-selected", { config: current });
+      }
+
+      let inspection = await inspectHelperPort(current.port, current.executablePath);
+      if (inspection.kind === "healthy-helper") {
+        return adoptHealthyHelper(inspection, current, "available");
+      }
+      return ensureHelperForCurrentConfig("helper-path-updated", {
+        config: current,
+        inspection: inspection,
+      });
+    });
+  },
+
+  async applyPortChange(nextPort) {
+    return this.restartHelperForConfigChange(
+      "port",
+      { port: parseInt(ZeroMcpPluginCommon.normalizePort(nextPort, 8000), 10) },
+      buildHelperConfigSnapshot()
+    );
+  },
+
+  async applySharedSecretChange(nextToken) {
+    return this.restartHelperForConfigChange(
+      "token",
+      { token: String(nextToken || "") },
+      buildHelperConfigSnapshot()
+    );
+  },
+
+  async testOrRecoverHelper(reason) {
+    return this._runHelperOperation(() => testOrRecoverHelper(reason || "manual-test"));
+  },
+
+  async stopManagedHelper(reason, options) {
+    return this._runHelperOperation(() =>
+      stopManagedHelper(reason || "manual-stop", options || {})
+    );
+  },
+
+  startHelperMonitor() {
+    if (this._helperMonitorTimer) {
+      return;
     }
-    unregisterEndpoints();
-    idempotencyCache.clear();
-    writeQueue = Promise.resolve();
-    this.initialized = false;
+    this._helperMonitorTimer = setInterval(() => {
+      if (this._shuttingDown) {
+        return;
+      }
+      this._runHelperOperation(() => maybeRecoverManagedHelper()).catch((error) => {
+        ZeroMcpPluginCommon.logError(error);
+      });
+    }, HELPER_MONITOR_INTERVAL_MS);
+  },
+
+  stopHelperMonitor() {
+    if (!this._helperMonitorTimer) {
+      return;
+    }
+    clearInterval(this._helperMonitorTimer);
+    this._helperMonitorTimer = null;
+  },
+
+  _runHelperOperation(fn) {
+    helperOperationQueue = helperOperationQueue.then(fn, fn);
+    return helperOperationQueue;
+  },
+
+  async shutdown() {
+    if (this._shutdownPromise) {
+      return this._shutdownPromise;
+    }
+
+    this._shuttingDown = true;
+    this.stopHelperMonitor();
+    this._shutdownPromise = (async () => {
+      try {
+        await this.stopManagedHelper("zotero-shutdown", { onShutdown: true });
+      } catch (error) {
+        ZeroMcpPluginCommon.logError(error);
+      } finally {
+        this.detachFromMainWindow();
+        unregisterEndpoints();
+        idempotencyCache.clear();
+        writeQueue = Promise.resolve();
+        helperOperationQueue = Promise.resolve();
+        helperRuntimeState = createDefaultHelperRuntimeState();
+        this.initialized = false;
+        this._shutdownPromise = null;
+      }
+    })();
+
+    return this._shutdownPromise;
   },
 };
 
@@ -387,30 +557,7 @@ function pathExists(path) {
 }
 
 function defaultBufferDirectory() {
-  let dataPath = getZoteroDataDirectoryPath();
-  if (!dataPath) {
-    return "";
-  }
-  try {
-    let directory = Zotero.File.pathToFile(dataPath);
-    directory.append("buffer");
-    return directory.path;
-  } catch (error) {
-    return "";
-  }
-}
-
-function defaultManagedMcpExecutablePath(includeConfigured) {
-  let explicit = getPrefsBranch().getStringPref("mcpExecutablePath", "").trim();
-  if (includeConfigured && explicit) {
-    return explicit;
-  }
-
-  let profilePath = getProfileDirectoryPath();
-  if (profilePath) {
-    return profilePath + "\\zotero-mcp.exe";
-  }
-  return "";
+  return ZeroMcpPluginCommon.defaultBufferDirectory();
 }
 
 function ensureOperationalDefaults() {
@@ -418,16 +565,8 @@ function ensureOperationalDefaults() {
     setBoolPref("mutationsEnabled", true);
   }
 
-  if (!hasUserPref("autoStartMcp")) {
-    setBoolPref("autoStartMcp", true);
-  }
-
-  if (!hasUserPref("keepHelperRunning")) {
-    setBoolPref("keepHelperRunning", true);
-  }
-
   if (!getSharedSecret()) {
-    setStringPref("sharedSecret", generateSharedSecret());
+    setStringPref("sharedSecret", ZeroMcpPluginCommon.generateSharedSecret());
   }
 
   if (!getPrefsBranch().getStringPref("bufferDirectory", "").trim()) {
@@ -436,19 +575,121 @@ function ensureOperationalDefaults() {
       setStringPref("bufferDirectory", bufferPath);
     }
   }
+  if (!hasUserPref("helperRecoveryMaxAttempts")) {
+    setStringPref("helperRecoveryMaxAttempts", "5");
+  }
+  if (!hasUserPref("helperRecoveryAttempts")) {
+    setStringPref("helperRecoveryAttempts", "0");
+  }
+  if (!getLastStablePort()) {
+    setLastStablePort(String(getLocalMcpPort()));
+  }
+  if (!getLastStableTokenHash()) {
+    setLastStableTokenHash(hashSecret(getSharedSecret()));
+  }
+}
 
+function attachPluginControllerToWindow(window) {
+  try {
+    if (window) {
+      window.ZeroMcpPlugin = ZeroMcpPlugin;
+    }
+  } catch (error) {}
+}
+
+function detachPluginControllerFromWindow(window) {
+  try {
+    if (window && window.ZeroMcpPlugin === ZeroMcpPlugin) {
+      delete window.ZeroMcpPlugin;
+    }
+  } catch (error) {}
+}
+
+function createDefaultHelperRuntimeState() {
+  return {
+    desiredPort: 8000,
+    desiredTokenHash: "",
+    managedPid: null,
+    managedByPlugin: false,
+    helperState: "idle",
+    recoveryAttempts: 0,
+    lastErrorCode: "",
+    statusMessageKey: "idle",
+  };
+}
+
+function helperLifecycleError(code, message, details) {
+  let error = new Error(message);
+  error.code = code;
+  error.details = details === undefined ? null : details;
+  return error;
+}
+
+function helperValidationStatusKey(code) {
+  switch (code) {
+    case "HELPER_PATH_REQUIRED":
+      return "helper-path-missing";
+    case "HELPER_PATH_NOT_FOUND":
+      return "helper-path-not-found";
+    case "HELPER_PATH_IS_DIRECTORY":
+      return "helper-path-is-directory";
+    case "HELPER_PATH_NOT_EXECUTABLE":
+      return "helper-path-not-executable";
+    case "HELPER_LAYOUT_INCOMPLETE":
+      return "helper-layout-incomplete";
+    default:
+      return "restart-rollback";
+  }
+}
+
+function inspectConfiguredHelperPath(config) {
+  return ZeroMcpPluginCommon.inspectHelperExecutablePath(config && config.executablePath);
+}
+
+function applyHelperValidationFailure(config, validation) {
+  let code = validation && validation.code ? validation.code : "HELPER_PATH_INVALID";
+  clearManagedHelperState();
+  updateHelperRuntimeState({
+    helperState: code === "HELPER_PATH_REQUIRED" ? "idle" : "error",
+    statusMessageKey: helperValidationStatusKey(code),
+    lastErrorCode: code,
+    config: config,
+  });
+}
+
+function requireValidHelperExecutable(config) {
+  let validation = inspectConfiguredHelperPath(config);
+  if (!validation.ok) {
+    applyHelperValidationFailure(config, validation);
+    throw helperLifecycleError(
+      validation.code,
+      validation.message,
+      validation.details === undefined ? null : validation.details
+    );
+  }
+  config.executablePath = validation.path || config.executablePath;
+  return validation;
+}
+
+function hashSecret(value) {
+  let input = String(value || "");
+  let hash = 5381;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = ((hash << 5) + hash + input.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 function getMutationsEnabled() {
   return getPrefsBranch().getBoolPref("mutationsEnabled", true);
 }
 
-function getKeepHelperRunning() {
-  return getPrefsBranch().getBoolPref("keepHelperRunning", true);
-}
-
 function getSharedSecret() {
   return getPrefsBranch().getStringPref("sharedSecret", "");
+}
+
+function getSharedSecretHash() {
+  return hashSecret(getSharedSecret());
 }
 
 function getBridgeURL() {
@@ -485,253 +726,932 @@ function getDefaultDuplicatePolicy() {
   return "add_existing_to_collection";
 }
 
-function getAutoStartMcp() {
-  return getPrefsBranch().getBoolPref("autoStartMcp", true);
+function getMcpExecutablePath() {
+  return getPrefsBranch().getStringPref("mcpExecutablePath", "").trim();
 }
 
-function getMcpExecutablePath() {
-  let configured = getPrefsBranch().getStringPref("mcpExecutablePath", "").trim();
-  return configured;
+function getManagedByPlugin() {
+  return getPrefsBranch().getBoolPref("mcpManagedByPlugin", false);
+}
+
+function setManagedByPlugin(value) {
+  getPrefsBranch().setBoolPref("mcpManagedByPlugin", !!value);
 }
 
 function getManagedMcpPid() {
   return getPrefsBranch().getStringPref("mcpManagedPid", "").trim();
 }
 
-function getLocalMcpPort() {
-  let raw = getPrefsBranch().getStringPref("localMcpPort", "8000").trim();
-  let port = parseInt(raw || "8000", 10);
-  if (!port || port < 1 || port > 65535) {
-    return 8000;
-  }
-  return port;
-}
-
-function getLocalMcpBaseURL() {
-  return "http://127.0.0.1:" + getLocalMcpPort();
-}
-
-function getLocalMcpURL() {
-  return getLocalMcpBaseURL() + "/mcp";
-}
-
-function getLocalBridgeProxyURL() {
-  return getLocalMcpBaseURL() + ENDPOINT_BASE;
-}
-
 function setManagedMcpPid(pid) {
   getPrefsBranch().setStringPref("mcpManagedPid", pid ? String(pid) : "");
 }
 
-async function maybeAutoStartMcp(plugin) {
-  if (!getAutoStartMcp()) {
-    return;
-  }
-
-  if (await isLocalMcpReachable()) {
-    return;
-  }
-
-  try {
-    await ensureManagedMcpRunning();
-  } catch (error) {
-    Zotero.logError(error);
-  }
+function getLastKnownManagedCommand() {
+  return getPrefsBranch().getStringPref("lastKnownManagedCommand", "").trim();
 }
 
-async function isLocalMcpReachable() {
+function setLastKnownManagedCommand(command) {
+  getPrefsBranch().setStringPref("lastKnownManagedCommand", String(command || "").trim());
+}
+
+function getHelperRecoveryMaxAttempts() {
+  let raw = getPrefsBranch().getStringPref("helperRecoveryMaxAttempts", "5").trim();
+  let parsed = parseInt(raw || "5", 10);
+  return parsed >= 0 ? parsed : 5;
+}
+
+function getHelperRecoveryAttempts() {
+  let raw = getPrefsBranch().getStringPref("helperRecoveryAttempts", "0").trim();
+  let parsed = parseInt(raw || "0", 10);
+  return parsed >= 0 ? parsed : 0;
+}
+
+function setHelperRecoveryAttempts(value) {
+  let normalized = Math.max(0, parseInt(String(value || "0"), 10) || 0);
+  setStringPref("helperRecoveryAttempts", String(normalized));
+}
+
+function resetHelperRecoveryAttempts() {
+  setHelperRecoveryAttempts(0);
+}
+
+function getLastStablePort() {
+  return getPrefsBranch().getStringPref("lastStablePort", "").trim();
+}
+
+function setLastStablePort(value) {
+  setStringPref("lastStablePort", value);
+}
+
+function getLastStableTokenHash() {
+  return getPrefsBranch().getStringPref("lastStableTokenHash", "").trim();
+}
+
+function setLastStableTokenHash(value) {
+  setStringPref("lastStableTokenHash", value);
+}
+
+function getLocalMcpPort() {
+  let raw = getPrefsBranch().getStringPref("localMcpPort", "8000").trim();
+  return parseInt(ZeroMcpPluginCommon.normalizePort(raw, 8000), 10);
+}
+
+function getLocalMcpBaseURL(portOverride) {
+  let port = portOverride ? parseInt(ZeroMcpPluginCommon.normalizePort(portOverride, 8000), 10) : getLocalMcpPort();
+  return "http://127.0.0.1:" + port;
+}
+
+function getLocalMcpURL(portOverride) {
+  return getLocalMcpBaseURL(portOverride) + "/mcp";
+}
+
+function getLocalBridgeProxyURL(portOverride) {
+  return getLocalMcpBaseURL(portOverride) + ENDPOINT_BASE;
+}
+
+function buildHelperConfigSnapshot(overrides) {
+  let config = {
+    executablePath: getMcpExecutablePath(),
+    port: getLocalMcpPort(),
+    token: getSharedSecret(),
+  };
+
+  if (overrides && Object.prototype.hasOwnProperty.call(overrides, "executablePath")) {
+    config.executablePath = String(overrides.executablePath || "").trim();
+  }
+  if (overrides && Object.prototype.hasOwnProperty.call(overrides, "port")) {
+    config.port = parseInt(ZeroMcpPluginCommon.normalizePort(overrides.port, 8000), 10);
+  }
+  if (overrides && Object.prototype.hasOwnProperty.call(overrides, "token")) {
+    config.token = String(overrides.token || "");
+  }
+
+  config.tokenHash = hashSecret(config.token);
+  config.managedPid = getManagedMcpPid();
+  config.managedByPlugin = getManagedByPlugin();
+  return config;
+}
+
+function buildHelperRuntimeStateSnapshot(patch) {
+  let snapshot = Object.assign({}, createDefaultHelperRuntimeState(), helperRuntimeState, patch || {});
+  let config = buildHelperConfigSnapshot(snapshot.config || null);
+  delete snapshot.config;
+  snapshot.desiredPort = config.port;
+  snapshot.desiredTokenHash = config.tokenHash;
+  snapshot.managedPid = getManagedMcpPid() || null;
+  snapshot.managedByPlugin = getManagedByPlugin();
+  snapshot.recoveryAttempts = getHelperRecoveryAttempts();
+  return snapshot;
+}
+
+function updateHelperRuntimeState(patch) {
+  helperRuntimeState = buildHelperRuntimeStateSnapshot(patch);
+  return cloneJSON(helperRuntimeState);
+}
+
+function persistStableHelperConfig(config) {
+  setLastStablePort(String(config.port));
+  setLastStableTokenHash(config.tokenHash);
+  resetHelperRecoveryAttempts();
+}
+
+function markManagedHelper(pid, command, managedByPlugin) {
+  let normalizedPid = pid ? String(pid) : "";
+  let shouldManage =
+    managedByPlugin !== undefined ? !!managedByPlugin : !!(normalizedPid || command);
+  setManagedByPlugin(shouldManage);
+  setManagedMcpPid(normalizedPid);
+  setLastKnownManagedCommand(command || "");
+  return updateHelperRuntimeState({
+    managedPid: normalizedPid || null,
+    managedByPlugin: shouldManage,
+  });
+}
+
+function clearManagedHelperState() {
+  setManagedByPlugin(false);
+  setManagedMcpPid("");
+  setLastKnownManagedCommand("");
+  return updateHelperRuntimeState({
+    managedPid: null,
+    managedByPlugin: false,
+  });
+}
+
+async function waitForDelay(delayMs) {
+  await Zotero.Promise.delay(delayMs);
+}
+
+function isRecognizedHelperHealthPayload(body) {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+  if (body.pluginAvailable === true || body.helperRole === "mcp-adapter") {
+    return true;
+  }
+  if (body.error && body.error.code === "BRIDGE_UPSTREAM_UNAVAILABLE") {
+    return true;
+  }
+  return false;
+}
+
+async function probeHelperBridgeHealth(portOverride) {
+  let url = getLocalBridgeProxyURL(portOverride) + "/health";
   try {
-    let response = await fetch(getLocalMcpURL(), {
+    let response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
+        Accept: "application/json",
       },
-      body: "{}",
+      body: JSON.stringify({ verbose: false }),
     });
-    return !!response;
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (error) {}
+    let recognizedHelper = isRecognizedHelperHealthPayload(body);
+    return {
+      ok: !!(response.ok && recognizedHelper),
+      recognizedHelper: recognizedHelper,
+      status: response.status,
+      body: body,
+      url: url,
+    };
   } catch (error) {
-    return false;
+    return {
+      ok: false,
+      recognizedHelper: false,
+      error: error,
+      url: url,
+    };
   }
 }
 
-async function ensureManagedMcpRunning() {
-  if (await isLocalMcpReachable()) {
-    return true;
+async function inspectHelperPort(portOverride, executablePath) {
+  let port = parseInt(ZeroMcpPluginCommon.normalizePort(portOverride, 8000), 10);
+  let probe = await probeHelperBridgeHealth(port);
+  let matchingInfo = await ZeroMcpPluginCommon.findMatchingListeningProcessInfo(port, executablePath);
+  let listeningInfo = matchingInfo || (await ZeroMcpPluginCommon.findListeningProcess(port));
+  let pid = listeningInfo && listeningInfo.pid ? String(listeningInfo.pid).trim() : "";
+  let command = listeningInfo && listeningInfo.command ? String(listeningInfo.command) : "";
+
+  if (probe.ok) {
+    return {
+      kind: "healthy-helper",
+      port: port,
+      pid: pid,
+      command: command,
+      probe: probe,
+    };
   }
 
-  let executablePath = getMcpExecutablePath();
-  if (!executablePath) {
-    plugin.log("Local MCP driver path is empty; skipping auto-start");
-    return false;
-  }
-  stopManagedMcpProcesses(executablePath);
-  startManagedMcpProcess();
-
-  if (await waitForLocalMcp(12, 500)) {
-    plugin.log("Local MCP became reachable after startup");
-    return true;
+  if (matchingInfo || probe.recognizedHelper) {
+    return {
+      kind: "stale-helper",
+      port: port,
+      pid: pid,
+      command: command,
+      probe: probe,
+    };
   }
 
-  plugin.log("Retrying local MCP startup once more");
-  stopManagedMcpProcesses(executablePath);
-  startManagedMcpProcess();
-  return waitForLocalMcp(12, 500);
+  if (listeningInfo && listeningInfo.pid) {
+    return {
+      kind: "conflict",
+      port: port,
+      pid: pid,
+      command: command,
+      probe: probe,
+    };
+  }
+
+  return {
+    kind: "available",
+    port: port,
+    pid: "",
+    command: "",
+    probe: probe,
+  };
 }
 
-async function waitForLocalMcp(maxAttempts, delayMs) {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await isLocalMcpReachable()) {
-      return true;
-    }
-    await new Promise(function (resolve) {
-      Services.tm.dispatchToMainThread(function () {
-        Zotero.Promise.delay(delayMs).then(resolve);
-      });
-    });
+async function collectManagedHelperTargets(options) {
+  let params = options || {};
+  let executablePath = params.executablePath || getMcpExecutablePath();
+  let executableInspection = executablePath
+    ? ZeroMcpPluginCommon.inspectHelperExecutablePath(executablePath)
+    : null;
+  if (executableInspection && executableInspection.ok) {
+    executablePath = executableInspection.path || executablePath;
+  } else if (executableInspection && !executableInspection.ok) {
+    executablePath = "";
   }
-  return isLocalMcpReachable();
-}
+  let targetsByPid = new Map();
 
-function startManagedMcpProcess() {
-  let executablePath = getMcpExecutablePath();
-  if (!executablePath) {
-    throw new Error("Missing MCP executable path");
-  }
-
-  let powershell = getWindowsPowerShellPath();
-  let process = Components.classes["@mozilla.org/process/util;1"]
-    .createInstance(Components.interfaces.nsIProcess);
-  process.init(powershell);
-  process.startHidden = true;
-
-  let pidFile = createTempPidFilePath("zero-mcp-start");
-  setManagedMcpPid("");
-  let args = ["-NoProfile", "-Command", buildManagedMcpCommand(executablePath, pidFile)];
-  process.runw(true, args, args.length);
-  getPrefsBranch().setBoolPref("mcpManagedByPlugin", true);
-  readManagedPidFromFile(pidFile);
-  return null;
-}
-
-function stopManagedMcpProcesses(executablePath) {
-  let cleanedExecutable = _clean_optional_text(executablePath) || getMcpExecutablePath() || "";
-  if (!cleanedExecutable) {
-    return;
-  }
-
-  let powershell = getWindowsPowerShellPath();
-  let process = Components.classes["@mozilla.org/process/util;1"]
-    .createInstance(Components.interfaces.nsIProcess);
-  process.init(powershell);
-  process.startHidden = true;
-
-  let target = escapeForPowerShell(cleanedExecutable);
-  let managedPid = getManagedMcpPid();
-  let command = managedPid
-    ? [
-        "$pidToStop=" + parseInt(managedPid, 10),
-        "Stop-Process -Id $pidToStop -Force -ErrorAction SilentlyContinue",
-        "$target='" + target + "'",
-        "Get-CimInstance Win32_Process -Filter \"name = 'zotero-mcp.exe'\" | Where-Object { $_.ExecutablePath -eq $target } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-      ].join("; ")
-    : [
-        "$target='" + target + "'",
-        "Get-CimInstance Win32_Process -Filter \"name = 'zotero-mcp.exe'\" | Where-Object { $_.ExecutablePath -eq $target } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-      ].join("; ");
-
-  let args = ["-NoProfile", "-Command", command];
-  try {
-    process.runw(true, args, args.length);
-    getPrefsBranch().setBoolPref("mcpManagedByPlugin", false);
-    setManagedMcpPid("");
-  } catch (error) {
-    Zotero.logError(error);
-  }
-}
-
-function buildManagedMcpCommand(executablePath, pidFile) {
-  let command = escapeForPowerShell(executablePath);
-  let bridgeURL = escapeForPowerShell(getLocalBridgeProxyURL());
-  let bridgeToken = escapeForPowerShell(getSharedSecret());
-  let localMcpPort = String(getLocalMcpPort());
-  return [
-    "$env:ZOTERO_NO_CLAUDE='true'",
-    "$env:ZOTERO_LOCAL='true'",
-    "$env:ZOTERO_LIBRARY_ID='0'",
-    "$env:ZOTERO_DESKTOP_BRIDGE_TIMEOUT='120'",
-    "$env:ZOTERO_DESKTOP_BRIDGE_PROXY_TIMEOUT='120'",
-    "$env:ZOTERO_DESKTOP_BRIDGE_URL='" + bridgeURL + "'",
-    "$env:ZOTERO_DESKTOP_BRIDGE_TOKEN='" + bridgeToken + "'",
-    "$proc = Start-Process -FilePath '" + command + "' -ArgumentList 'serve','--transport','streamable-http','--host','127.0.0.1','--port','" + localMcpPort + "' -WindowStyle Hidden -PassThru",
-    "$proc.Id | Set-Content -Path '" + escapeForPowerShell(pidFile) + "' -Encoding UTF8",
-  ].join("; ");
-}
-
-function createTempPidFilePath(prefix) {
-  let tempFile = Services.dirsvc.get("TmpD", Components.interfaces.nsIFile);
-  tempFile.append((prefix || "zero-mcp") + "-" + Date.now() + "-" + Math.random().toString(16).slice(2) + ".txt");
-  return tempFile.path;
-}
-
-function readManagedPidFromFile(path) {
-  if (!path) {
-    return;
-  }
-  try {
-    let file = Zotero.File.pathToFile(path);
-    if (!file.exists()) {
+  function addTarget(info, source) {
+    if (!info || !info.pid) {
       return;
     }
-    let pid = String(Zotero.File.getContents(path) || "").trim();
-    if (pid) {
-      setManagedMcpPid(pid);
+    let pid = String(info.pid).trim();
+    if (!pid || targetsByPid.has(pid)) {
+      return;
     }
-    file.remove(false);
+    targetsByPid.set(pid, {
+      pid: pid,
+      command: info.command ? String(info.command) : "",
+      source: source || "",
+    });
+  }
+
+  let recordedPid = params.recordedPid || getManagedMcpPid();
+  if (recordedPid && (await ZeroMcpPluginCommon.isProcessAlive(recordedPid, executablePath))) {
+    addTarget({ pid: recordedPid, command: getLastKnownManagedCommand() }, "recorded");
+  }
+
+  let ports = [];
+  if (Object.prototype.hasOwnProperty.call(params, "port")) {
+    ports.push(params.port);
+  }
+  if (Object.prototype.hasOwnProperty.call(params, "additionalPort")) {
+    ports.push(params.additionalPort);
+  }
+  if (params.includeCurrentPort) {
+    ports.push(getLocalMcpPort());
+  }
+
+  for (let port of Array.from(new Set(ports.filter((value) => value !== undefined && value !== null)))) {
+    let info = await ZeroMcpPluginCommon.findMatchingListeningProcessInfo(port, executablePath);
+    if (info) {
+      addTarget(info, "port:" + port);
+    }
+  }
+
+  if (params.includeAllMatching && executablePath) {
+    let matchingInfos = await ZeroMcpPluginCommon.listMatchingProcessInfo(executablePath);
+    for (let info of matchingInfos) {
+      addTarget(info, "process");
+    }
+  }
+
+  return Array.from(targetsByPid.values());
+}
+
+async function terminateHelperTargets(targets, executablePath) {
+  let normalizedTargets = [];
+  let seenPids = new Set();
+  for (let target of targets || []) {
+    if (!target || !target.pid) {
+      continue;
+    }
+    let pid = String(target.pid).trim();
+    if (!pid || seenPids.has(pid)) {
+      continue;
+    }
+    seenPids.add(pid);
+    normalizedTargets.push(
+      Object.assign({}, target, {
+        pid: pid,
+      })
+    );
+  }
+  if (!normalizedTargets.length) {
+    return { closed: true, forced: false };
+  }
+
+  for (let target of normalizedTargets) {
+    ZeroMcpPluginCommon.terminateProcessTree(target.pid, false);
+  }
+
+  let allClosed = true;
+  for (let target of normalizedTargets) {
+    let closed = await ZeroMcpPluginCommon.waitForProcessExit(target.pid, 2500, executablePath);
+    if (!closed) {
+      allClosed = false;
+    }
+  }
+
+  if (allClosed) {
+    return { closed: true, forced: false };
+  }
+
+  for (let target of normalizedTargets) {
+    if (await ZeroMcpPluginCommon.isProcessAlive(target.pid, executablePath)) {
+      ZeroMcpPluginCommon.terminateProcessTree(target.pid, true);
+    }
+  }
+
+  let forcedClosed = true;
+  for (let target of normalizedTargets) {
+    let closed = await ZeroMcpPluginCommon.waitForProcessExit(target.pid, 1500, executablePath);
+    if (!closed) {
+      forcedClosed = false;
+    }
+  }
+
+  return { closed: forcedClosed, forced: true };
+}
+
+async function cleanupExtraneousHelperProcesses(config, preservedPid) {
+  let normalizedPreservedPid = String(preservedPid || "").trim();
+  if (!config || !config.executablePath || !normalizedPreservedPid) {
+    return { closed: true, removed: 0, forced: false };
+  }
+
+  let targets = await collectManagedHelperTargets({
+    executablePath: config.executablePath,
+    port: config.port,
+    includeCurrentPort: true,
+    includeAllMatching: true,
+  });
+  let staleTargets = targets.filter((target) => String(target.pid || "").trim() !== normalizedPreservedPid);
+  if (!staleTargets.length) {
+    return { closed: true, removed: 0, forced: false };
+  }
+
+  let result = await terminateHelperTargets(staleTargets, config.executablePath);
+  return {
+    closed: result.closed,
+    removed: staleTargets.length,
+    forced: result.forced,
+  };
+}
+
+function adoptHealthyHelper(inspection, config, statusMessageKey) {
+  if (!inspection) {
+    throw helperLifecycleError("HELPER_NOT_RUNNING", "The helper is not reachable");
+  }
+  markManagedHelper(inspection.pid, inspection.command || config.executablePath, true);
+  persistStableHelperConfig(config);
+  updateHelperRuntimeState({
+    helperState: "running",
+    statusMessageKey: statusMessageKey || "available",
+    lastErrorCode: "",
+  });
+  return buildHelperRuntimeStateSnapshot();
+}
+
+function startManagedHelperProcess(config) {
+  requireValidHelperExecutable(config);
+
+  updateHelperRuntimeState({
+    helperState: "starting",
+    statusMessageKey: "starting",
+    lastErrorCode: "",
+    config: config,
+  });
+  let result = ZeroMcpPluginCommon.startManagedMcpProcess(config.executablePath, config.port);
+  markManagedHelper(result.pid, config.executablePath, true);
+  return result;
+}
+
+async function isManagedHelperLaunchPending(config, inspection) {
+  let managedPid = getManagedMcpPid();
+  if (managedPid && (await ZeroMcpPluginCommon.isProcessAlive(managedPid, config.executablePath))) {
+    return true;
+  }
+
+  if (inspection && inspection.kind === "stale-helper") {
+    return true;
+  }
+
+  let matchingInfo = await ZeroMcpPluginCommon.findMatchingListeningProcessInfo(
+    config.port,
+    config.executablePath
+  );
+  return !!(matchingInfo && matchingInfo.pid);
+}
+
+async function waitForHealthyHelper(config, maxAttempts, delayMs) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let inspection = await inspectHelperPort(config.port, config.executablePath);
+    if (inspection.kind === "healthy-helper") {
+      return inspection;
+    }
+    if (inspection.kind === "conflict") {
+      throw helperLifecycleError(
+        "PORT_IN_USE",
+        "Port " + config.port + " is occupied by another process",
+        { port: config.port, pid: inspection.pid || null }
+      );
+    }
+    await waitForDelay(delayMs);
+  }
+
+  let finalInspection = await inspectHelperPort(config.port, config.executablePath);
+  if (finalInspection.kind === "healthy-helper") {
+    return finalInspection;
+  }
+
+  if (await isManagedHelperLaunchPending(config, finalInspection)) {
+    return {
+      kind: "starting-slow",
+      port: config.port,
+      pid: finalInspection.pid || getManagedMcpPid() || "",
+      command: finalInspection.command || getLastKnownManagedCommand() || config.executablePath,
+      probe: finalInspection.probe || null,
+    };
+  }
+
+  throw helperLifecycleError(
+    "HELPER_START_TIMEOUT",
+    "The helper did not become reachable on port " + config.port + " in time",
+    { port: config.port }
+  );
+}
+
+async function stopManagedHelper(reason, options) {
+  let params = options || {};
+  let config = buildHelperConfigSnapshot(params.config || null);
+  updateHelperRuntimeState({
+    helperState: "stopping",
+    statusMessageKey: "stopping",
+    lastErrorCode: "",
+    config: config,
+  });
+
+  let targets = await collectManagedHelperTargets({
+    executablePath: params.executablePath || config.executablePath,
+    port: Object.prototype.hasOwnProperty.call(params, "port") ? params.port : config.port,
+    additionalPort: params.additionalPort,
+    includeCurrentPort: params.includeCurrentPort !== false,
+    includeAllMatching: params.includeAllMatching !== false,
+    recordedPid: params.recordedPid,
+  });
+
+  if (!targets.length) {
+    clearManagedHelperState();
+    updateHelperRuntimeState({
+      helperState: "idle",
+      statusMessageKey: "stopped",
+      lastErrorCode: "",
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  let result = await terminateHelperTargets(targets, config.executablePath);
+  if (!result.closed) {
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "stop-failed",
+      lastErrorCode: "HELPER_STOP_FAILED",
+    });
+    throw helperLifecycleError(
+      "HELPER_STOP_FAILED",
+      "Failed to stop the previously managed helper process"
+    );
+  }
+
+  clearManagedHelperState();
+  updateHelperRuntimeState({
+    helperState: "idle",
+    statusMessageKey: "stopped",
+    lastErrorCode: "",
+  });
+  return buildHelperRuntimeStateSnapshot();
+}
+
+async function ensureHelperForCurrentConfig(reason, options) {
+  let config = buildHelperConfigSnapshot((options && options.config) || null);
+  updateHelperRuntimeState({
+    helperState: "checking",
+    statusMessageKey: "checking",
+    lastErrorCode: "",
+    config: config,
+  });
+
+  if (!config.executablePath) {
+    clearManagedHelperState();
+    updateHelperRuntimeState({
+      helperState: "idle",
+      statusMessageKey: "helper-path-missing",
+      lastErrorCode: "",
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  requireValidHelperExecutable(config);
+
+  let inspection = (options && options.inspection) || (await inspectHelperPort(config.port, config.executablePath));
+  if (inspection.kind === "healthy-helper") {
+    let adopted = adoptHealthyHelper(inspection, config, "available");
+    if (inspection.pid) {
+      cleanupExtraneousHelperProcesses(config, inspection.pid).catch((error) => {
+        ZeroMcpPluginCommon.logError(error);
+      });
+    }
+    return adopted;
+  }
+
+  if (inspection.kind === "conflict") {
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "port-conflict",
+      lastErrorCode: "PORT_IN_USE",
+      config: config,
+    });
+    throw helperLifecycleError(
+      "PORT_IN_USE",
+      "Port " + config.port + " is occupied by another process",
+      { port: config.port, pid: inspection.pid || null }
+    );
+  }
+
+  let staleTargets = await collectManagedHelperTargets({
+    executablePath: config.executablePath,
+    port: config.port,
+    includeCurrentPort: true,
+  });
+  if (inspection.kind === "stale-helper" && inspection.pid) {
+    staleTargets.push({
+      pid: inspection.pid,
+      command: inspection.command || "",
+      source: "stale-port",
+    });
+  }
+  if (staleTargets.length) {
+    let staleResult = await terminateHelperTargets(staleTargets, config.executablePath);
+    if (!staleResult.closed) {
+      updateHelperRuntimeState({
+        helperState: "error",
+        statusMessageKey: "restart-rollback",
+        lastErrorCode: "OLD_HELPER_STILL_RUNNING",
+        config: config,
+      });
+      throw helperLifecycleError(
+        "OLD_HELPER_STILL_RUNNING",
+        "The previous helper process could not be terminated before restart"
+      );
+    }
+    clearManagedHelperState();
+    await waitForDelay(150);
+  }
+
+  startManagedHelperProcess(config);
+  let readyInspection = await waitForHealthyHelper(config, 16, 500);
+  if (readyInspection.kind === "starting-slow") {
+    markManagedHelper(readyInspection.pid, readyInspection.command || config.executablePath, true);
+    updateHelperRuntimeState({
+      helperState: "starting",
+      statusMessageKey: "starting-slow",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+  let adopted = adoptHealthyHelper(readyInspection, config, "available");
+  if (readyInspection.pid) {
+    cleanupExtraneousHelperProcesses(config, readyInspection.pid).catch((error) => {
+      ZeroMcpPluginCommon.logError(error);
+    });
+  }
+  return adopted;
+}
+
+async function refreshHelperRuntimeState(reason) {
+  let config = buildHelperConfigSnapshot();
+  if (!config.executablePath) {
+    clearManagedHelperState();
+    updateHelperRuntimeState({
+      helperState: "idle",
+      statusMessageKey: "helper-path-missing",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  let validation = inspectConfiguredHelperPath(config);
+  if (!validation.ok) {
+    applyHelperValidationFailure(config, validation);
+    return buildHelperRuntimeStateSnapshot();
+  }
+  config.executablePath = validation.path || config.executablePath;
+
+  let inspection = await inspectHelperPort(config.port, config.executablePath);
+  if (inspection.kind === "healthy-helper") {
+    let adopted = adoptHealthyHelper(inspection, config, "available");
+    if (inspection.pid) {
+      cleanupExtraneousHelperProcesses(config, inspection.pid).catch((error) => {
+        ZeroMcpPluginCommon.logError(error);
+      });
+    }
+    return adopted;
+  }
+
+  if (inspection.kind === "conflict") {
+    clearManagedHelperState();
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "port-conflict",
+      lastErrorCode: "PORT_IN_USE",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  if (getManagedByPlugin() && (await isManagedHelperLaunchPending(config, inspection))) {
+    updateHelperRuntimeState({
+      helperState: "starting",
+      statusMessageKey:
+        helperRuntimeState.helperState === "restarting" ? "restarting" : "starting-slow",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  clearManagedHelperState();
+  updateHelperRuntimeState({
+    helperState: "idle",
+    statusMessageKey: "idle",
+    lastErrorCode: inspection.kind === "stale-helper" ? "HELPER_NOT_HEALTHY" : "",
+    config: config,
+  });
+  return buildHelperRuntimeStateSnapshot();
+}
+
+async function maybeRecoverManagedHelper() {
+  if (!getManagedByPlugin() || ZeroMcpPlugin._shuttingDown) {
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  let config = buildHelperConfigSnapshot();
+  if (!config.executablePath) {
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  let validation = inspectConfiguredHelperPath(config);
+  if (!validation.ok) {
+    applyHelperValidationFailure(config, validation);
+    return buildHelperRuntimeStateSnapshot();
+  }
+  config.executablePath = validation.path || config.executablePath;
+
+  let inspection = await inspectHelperPort(config.port, config.executablePath);
+  if (inspection.kind === "healthy-helper") {
+    if (inspection.pid && inspection.pid !== getManagedMcpPid()) {
+      adoptHealthyHelper(inspection, config, "available");
+    }
+    if (inspection.pid) {
+      cleanupExtraneousHelperProcesses(config, inspection.pid).catch((error) => {
+        ZeroMcpPluginCommon.logError(error);
+      });
+    }
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  if (await isManagedHelperLaunchPending(config, inspection)) {
+    updateHelperRuntimeState({
+      helperState: "starting",
+      statusMessageKey:
+        helperRuntimeState.helperState === "restarting" ? "restarting" : "starting-slow",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  let attempts = getHelperRecoveryAttempts();
+  let maxAttempts = getHelperRecoveryMaxAttempts();
+  if (attempts >= maxAttempts) {
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "recovery-exhausted",
+      lastErrorCode: "RECOVERY_EXHAUSTED",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  setHelperRecoveryAttempts(attempts + 1);
+  updateHelperRuntimeState({
+    helperState: "restarting",
+    statusMessageKey: "recovery-running",
+    lastErrorCode: "HELPER_RECOVERING",
+    config: config,
+  });
+
+  try {
+    return await ensureHelperForCurrentConfig("runtime-recovery");
   } catch (error) {
-    Zotero.logError(error);
+    if (getHelperRecoveryAttempts() >= maxAttempts) {
+      updateHelperRuntimeState({
+        helperState: "error",
+        statusMessageKey: "recovery-exhausted",
+        lastErrorCode: "RECOVERY_EXHAUSTED",
+        config: config,
+      });
+    }
+    throw error;
   }
 }
 
-function getWindowsCommandPath(name) {
-  let windir = Services.dirsvc.get("WinD", Components.interfaces.nsIFile);
-  let file = windir.clone();
-  file.append("System32");
-  file.append(name);
-  if (!file.exists()) {
-    throw new Error("Missing Windows command: " + name);
-  }
-  return file;
-}
-
-function getWindowsPowerShellPath() {
-  let windir = Services.dirsvc.get("WinD", Components.interfaces.nsIFile);
-  let file = windir.clone();
-  file.append("System32");
-  file.append("WindowsPowerShell");
-  file.append("v1.0");
-  file.append("powershell.exe");
-  if (!file.exists()) {
-    throw new Error("Missing Windows PowerShell executable");
-  }
-  return file;
-}
-
-function escapeForPowerShell(value) {
-  return String(value || "").replace(/'/g, "''");
-}
-
-function generateSharedSecret() {
-  if (typeof crypto !== "undefined" && crypto && crypto.getRandomValues) {
-    let bytes = new Uint8Array(24);
-    crypto.getRandomValues(bytes);
-    return Array.from(bytes, function (value) {
-      return value.toString(16).padStart(2, "0");
-    }).join("");
+async function testOrRecoverHelper(reason) {
+  let config = buildHelperConfigSnapshot();
+  if (!config.executablePath) {
+    clearManagedHelperState();
+    updateHelperRuntimeState({
+      helperState: "idle",
+      statusMessageKey: "helper-path-missing",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
   }
 
-  let uuid = Services.uuid.generateUUID().toString().replace(/[{}-]/g, "");
-  return (uuid + uuid).slice(0, 48);
+  requireValidHelperExecutable(config);
+
+  let inspection = await inspectHelperPort(config.port, config.executablePath);
+  if (inspection.kind === "healthy-helper") {
+    let adopted = adoptHealthyHelper(inspection, config, "available");
+    if (inspection.pid) {
+      cleanupExtraneousHelperProcesses(config, inspection.pid).catch((error) => {
+        ZeroMcpPluginCommon.logError(error);
+      });
+    }
+    return adopted;
+  }
+
+  if (await isManagedHelperLaunchPending(config, inspection)) {
+    updateHelperRuntimeState({
+      helperState: "starting",
+      statusMessageKey: "starting-slow",
+      lastErrorCode: "",
+      config: config,
+    });
+    return buildHelperRuntimeStateSnapshot();
+  }
+
+  updateHelperRuntimeState({
+    helperState: "starting",
+    statusMessageKey: "starting",
+    lastErrorCode: "",
+    config: config,
+  });
+  return ensureHelperForCurrentConfig(reason || "manual-test");
+}
+
+async function restartHelperForConfigChange(changeType, nextConfig, previousConfig) {
+  let previous = buildHelperConfigSnapshot(previousConfig || null);
+  let candidate = buildHelperConfigSnapshot(Object.assign({}, previous, nextConfig || {}));
+  if (candidate.executablePath) {
+    requireValidHelperExecutable(candidate);
+  }
+  let preflight = await inspectHelperPort(candidate.port, candidate.executablePath || previous.executablePath);
+
+  if (changeType === "port" && candidate.port !== previous.port && preflight.kind === "conflict") {
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "port-conflict",
+      lastErrorCode: "PORT_IN_USE",
+      config: previous,
+    });
+    throw helperLifecycleError(
+      "PORT_IN_USE",
+      "Port " + candidate.port + " is occupied by another process",
+      { port: candidate.port, pid: preflight.pid || null }
+    );
+  }
+
+  updateHelperRuntimeState({
+    helperState: "restarting",
+    statusMessageKey: "restarting",
+    lastErrorCode: "",
+    config: candidate,
+  });
+
+  let previousPrefs = {
+    executablePath: getMcpExecutablePath(),
+    port: String(getLocalMcpPort()),
+    token: getSharedSecret(),
+  };
+
+  setStringPref("mcpExecutablePath", candidate.executablePath);
+  setStringPref("localMcpPort", String(candidate.port));
+  setStringPref("sharedSecret", candidate.token);
+
+  try {
+    let stopTargets = await collectManagedHelperTargets({
+      executablePath: previous.executablePath || candidate.executablePath,
+      port: previous.port,
+      includeCurrentPort: false,
+      includeAllMatching: true,
+    });
+    if (
+      changeType !== "port" &&
+      preflight.kind === "healthy-helper" &&
+      preflight.pid
+    ) {
+      stopTargets.push({
+        pid: preflight.pid,
+        command: preflight.command || "",
+        source: "current-port",
+      });
+    }
+    if (preflight.kind === "stale-helper" && preflight.pid) {
+      stopTargets.push({
+        pid: preflight.pid,
+        command: preflight.command || "",
+        source: "target-port",
+      });
+    }
+
+    if (stopTargets.length) {
+      let stopResult = await terminateHelperTargets(stopTargets, previous.executablePath || candidate.executablePath);
+      if (!stopResult.closed) {
+        throw helperLifecycleError(
+          "OLD_HELPER_STILL_RUNNING",
+          "The previous helper process could not be terminated before restart"
+        );
+      }
+      clearManagedHelperState();
+      await waitForDelay(150);
+    }
+
+    if (!candidate.executablePath) {
+      persistStableHelperConfig(candidate);
+      clearManagedHelperState();
+      updateHelperRuntimeState({
+        helperState: "idle",
+        statusMessageKey: "helper-path-missing",
+        lastErrorCode: "",
+        config: candidate,
+      });
+      return buildHelperRuntimeStateSnapshot();
+    }
+
+    if (
+      changeType === "port" &&
+      candidate.port !== previous.port &&
+      preflight.kind === "healthy-helper"
+    ) {
+      let adopted = adoptHealthyHelper(preflight, candidate, "available");
+      if (preflight.pid) {
+        cleanupExtraneousHelperProcesses(candidate, preflight.pid).catch((error) => {
+          ZeroMcpPluginCommon.logError(error);
+        });
+      }
+      return adopted;
+    }
+
+    return await ensureHelperForCurrentConfig("config-change-" + changeType);
+  } catch (error) {
+    setStringPref("mcpExecutablePath", previousPrefs.executablePath);
+    setStringPref("localMcpPort", previousPrefs.port);
+    setStringPref("sharedSecret", previousPrefs.token);
+    updateHelperRuntimeState({
+      helperState: "error",
+      statusMessageKey: "restart-rollback",
+      lastErrorCode: error.code || "CONFIG_RESTART_FAILED",
+      config: previous,
+    });
+    try {
+      await ensureHelperForCurrentConfig("config-rollback-" + changeType, { config: previous });
+    } catch (rollbackError) {
+      ZeroMcpPluginCommon.logError(rollbackError);
+    }
+    throw error;
+  }
 }
 
 function getLibraryID() {
@@ -1616,10 +2536,13 @@ async function handleHealth(data, requestData) {
     bridgeURL: getLocalBridgeProxyURL(),
     localMcpURL: getLocalMcpURL(),
     localMcpPort: getLocalMcpPort(),
-    autoStartMcp: getAutoStartMcp(),
+    helperLifecycleMode: "zotero-session-bound",
     managedMcpPid: getManagedMcpPid() || null,
+    managedByPlugin: getManagedByPlugin(),
     mcpExecutablePath: getMcpExecutablePath() || null,
     bufferDirectory: getBufferDirectory() || null,
+    helperRecoveryMaxAttempts: getHelperRecoveryMaxAttempts(),
+    helperRecoveryAttempts: getHelperRecoveryAttempts(),
     supportedOperations: SUPPORTED_OPERATIONS,
     supportedImportModes: SUPPORTED_IMPORT_MODES,
     supportedDuplicatePolicies: SUPPORTED_DUPLICATE_POLICIES,

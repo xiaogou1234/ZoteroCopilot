@@ -67,12 +67,21 @@ def _candidate_config_roots() -> list[Path]:
         if appdata:
             roots.append(Path(appdata) / "Zotero" / "Zotero")
     elif system == "Darwin":
+        roots.append(Path.home() / "Library" / "Application Support" / "Zotero")
         roots.append(Path.home() / "Library" / "Application Support" / "Zotero" / "Zotero")
     else:
         roots.append(Path.home() / ".zotero" / "zotero")
         roots.append(Path.home() / ".config" / "zotero")
 
     return roots
+
+
+def _profile_lock_paths(profile_path: Path) -> list[Path]:
+    return [
+        profile_path / ".parentlock",
+        profile_path / "parent.lock",
+        profile_path / "lock",
+    ]
 
 
 def _load_profiles(config_root: Path) -> list[tuple[str, Path, bool]]:
@@ -152,9 +161,10 @@ def _choose_profile(profiles: list[tuple[str, Path, bool]]) -> tuple[str, Path] 
 
     locked_profiles: list[tuple[float, str, Path]] = []
     for name, path, _ in profiles:
-        lock_path = path / "parent.lock"
-        if lock_path.exists():
-            locked_profiles.append((lock_path.stat().st_mtime, name, path))
+        for lock_path in _profile_lock_paths(path):
+            if lock_path.exists():
+                locked_profiles.append((lock_path.stat().st_mtime, name, path))
+                break
 
     if locked_profiles:
         _, name, path = max(locked_profiles, key=lambda item: item[0])

@@ -207,25 +207,15 @@ def backup_configurations() -> Path:
             except Exception as e:
                 logger.warning(f"Could not backup Claude config from {config_path}: {e}")
 
-    # Backup semantic search config
-    semantic_config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-    if semantic_config_path.exists():
+    # Backup local zotero-mcp config
+    local_config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+    if local_config_path.exists():
         try:
-            backup_semantic_path = backup_dir / "semantic_config.json"
-            shutil.copy2(semantic_config_path, backup_semantic_path)
-            print(f"Backed up semantic search config")
+            backup_config_path = backup_dir / "zotero_mcp_config.json"
+            shutil.copy2(local_config_path, backup_config_path)
+            print("Backed up zotero-mcp local config")
         except Exception as e:
-            logger.warning(f"Could not backup semantic search config: {e}")
-
-    # Backup ChromaDB database (if exists)
-    chroma_db_path = Path.home() / ".config" / "zotero-mcp" / "chroma_db"
-    if chroma_db_path.exists():
-        try:
-            backup_chroma_path = backup_dir / "chroma_db"
-            shutil.copytree(chroma_db_path, backup_chroma_path)
-            print(f"Backed up ChromaDB database")
-        except Exception as e:
-            logger.warning(f"Could not backup ChromaDB database: {e}")
+            logger.warning(f"Could not backup zotero-mcp local config: {e}")
 
     return backup_dir
 
@@ -257,29 +247,16 @@ def restore_configurations(backup_dir: Path) -> bool:
             logger.error(f"Could not restore Claude Desktop config: {e}")
             success = False
 
-    # Restore semantic search config
-    semantic_backup = backup_dir / "semantic_config.json"
-    if semantic_backup.exists():
+    # Restore local zotero-mcp config
+    config_backup = backup_dir / "zotero_mcp_config.json"
+    if config_backup.exists():
         try:
-            semantic_config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-            semantic_config_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(semantic_backup, semantic_config_path)
-            print(f"Restored semantic search config")
+            local_config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+            local_config_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(config_backup, local_config_path)
+            print("Restored zotero-mcp local config")
         except Exception as e:
-            logger.error(f"Could not restore semantic search config: {e}")
-            success = False
-
-    # Restore ChromaDB database
-    chroma_backup = backup_dir / "chroma_db"
-    if chroma_backup.exists():
-        try:
-            chroma_db_path = Path.home() / ".config" / "zotero-mcp" / "chroma_db"
-            if chroma_db_path.exists():
-                shutil.rmtree(chroma_db_path)
-            shutil.copytree(chroma_backup, chroma_db_path)
-            print(f"Restored ChromaDB database")
-        except Exception as e:
-            logger.error(f"Could not restore ChromaDB database: {e}")
+            logger.error(f"Could not restore zotero-mcp local config: {e}")
             success = False
 
     return success

@@ -1,47 +1,50 @@
 # Windows Helper Build
 
-This directory contains the Windows packaging assets for the ZoteroCopilot helper executable.
+This directory contains the Windows packaging entry point for the Zotero Copilot helper.
 
 ## Goal
 
-Build a local `zotero-mcp.exe` that can be selected from the Zotero plugin preferences page.
+Build:
+
+- internal onedir output: `dist\\zotero_copilot_0.3.0_helper_windows_x64\\`
+- public release archive: `dist\\releases\\zotero_copilot_0.3.0_helper_windows_x64.zip`
+
+The build script uses the shared PyInstaller spec at `packaging/helper/zotero-mcp-helper.spec`.
 
 ## Recommended environment
 
 ```powershell
-cd F:\codex\zotero-mcp
+cd C:\path\to\ZoteroCopilot
 python -m venv .venv-helper-build
 .\.venv-helper-build\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[build,semantic]"
+python -m pip install -e ".[build]"
 ```
 
 ## Build command
 
 ```powershell
-cd F:\codex\zotero-mcp
+cd C:\path\to\ZoteroCopilot
 .\packaging\windows\build-helper.ps1 -PythonExe .\.venv-helper-build\Scripts\python.exe -Clean
 ```
 
-## Output
+## Output layout
 
-The expected output directory is:
+The onedir output contains:
 
-```text
-dist\zotero-mcp\
-```
+- `zotero_copilot_0.3.0_helper_windows_x64.exe`
+- `_internal\`
 
-The expected executable path is:
+The public zip contains the full top-level helper directory plus:
 
-```text
-dist\zotero-mcp\zotero-mcp.exe
-```
+- `README.txt`
+- `SHA256SUMS.txt`
 
 ## Verification
 
 ```powershell
-.\dist\zotero-mcp\zotero-mcp.exe version
-.\dist\zotero-mcp\zotero-mcp.exe serve --transport streamable-http --host 127.0.0.1 --port 8000
+.\dist\zotero_copilot_0.3.0_helper_windows_x64\zotero_copilot_0.3.0_helper_windows_x64.exe version
+.\dist\zotero_copilot_0.3.0_helper_windows_x64\zotero_copilot_0.3.0_helper_windows_x64.exe serve --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
-This repository does not commit built helper artifacts.
+End users must extract the zip and keep the whole helper directory intact. Do not distribute or move only the `.exe`.

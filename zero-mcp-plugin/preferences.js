@@ -1,177 +1,595 @@
 var ZeroMcpPluginPreferences = {
   PREF_BRANCH: "extensions.zeroMcpPlugin.",
-  PLUGIN_VERSION: "0.1.1",
   DEFAULT_LINK_MODE: "imported_file",
   DEFAULT_DUPLICATE_POLICY: "add_existing_to_collection",
-  serviceStateLabel: "服务未启动",
+  STATUS_POLL_INTERVAL_MS: 3000,
+  FEEDBACK_PLACEHOLDER: "\u00A0",
   initialized: false,
+  transientMessageEventsBound: false,
+  statusPollTimer: null,
+  temporaryStatusMessage: "",
+  temporaryStatusLevel: "idle",
+  lastRuntimeSnapshot: null,
+  statusRefreshInFlight: false,
 
   init() {
-    if (this.initialized) {
-      this.refreshDerivedFields();
-      this.refreshRuntimeServiceStatus();
-      return;
+    if (!this.initialized) {
+      this.cacheElements();
+      this.bindTransientMessageReset();
+      this.bindUnload();
+      this.ensureDefaults();
+      this.loadPrefsIntoUI();
+      this.initialized = true;
+      this.startStatusPolling();
     }
-
-    this.cacheElements();
-    this.ensureDefaults();
-    this.loadPrefsIntoUI();
-    this.initialized = true;
+    this.refreshRuntimeServiceStatus();
   },
 
   cacheElements() {
+    this.root = document.getElementById("zero-mcp-plugin-preferences-root");
     this.status = document.getElementById("zero-mcp-plugin-status");
     this.mcpExecutablePath = document.getElementById("zero-mcp-plugin-mcp-executable-path");
     this.bufferDirectory = document.getElementById("zero-mcp-plugin-buffer-directory");
     this.mutationsEnabled = document.getElementById("zero-mcp-plugin-mutations-enabled");
-    this.autoStartMcp = document.getElementById("zero-mcp-plugin-auto-start-mcp");
-    this.keepHelperRunning = document.getElementById("zero-mcp-plugin-keep-helper-running");
     this.localMcpPort = document.getElementById("zero-mcp-plugin-local-mcp-port");
     this.sharedSecret = document.getElementById("zero-mcp-plugin-shared-secret");
+    this.configActionStatus = document.getElementById("zero-mcp-plugin-config-action-status");
+    this.portActionStatus = document.getElementById("zero-mcp-plugin-port-action-status");
     this.tokenActionStatus = document.getElementById("zero-mcp-plugin-token-action-status");
-    this.serviceActionStatus = document.getElementById("zero-mcp-plugin-service-action-status");
     this.defaultLinkMode = document.getElementById("zero-mcp-plugin-default-link-mode");
     this.defaultDuplicatePolicy = document.getElementById("zero-mcp-plugin-default-duplicate-policy");
-    this.testMcpStatus = document.getElementById("zero-mcp-plugin-test-mcp-status");
+    this.feedbackElements = {
+      config: this.configActionStatus,
+      port: this.portActionStatus,
+      token: this.tokenActionStatus,
+    };
+    this.initializeMessageBoxes();
+  },
+
+  initializeMessageBoxes() {
+    this.applyStatusBoxStyle(this.status, "idle");
+    this.renderActionFeedback("config", "", "idle");
+    this.renderActionFeedback("port", "", "idle");
+    this.renderActionFeedback("token", "", "idle");
+  },
+
+  styleTokens(level) {
+    switch (level) {
+      case "success":
+        return {
+          background: "#eef7f1",
+          borderColor: "#cfe4d6",
+          color: "#22543d",
+        };
+      case "loading":
+        return {
+          background: "#eef4fb",
+          borderColor: "#cfdced",
+          color: "#234a73",
+        };
+      case "warning":
+        return {
+          background: "#fff7e8",
+          borderColor: "#eed7a3",
+          color: "#7a5600",
+        };
+      case "error":
+        return {
+          background: "#fdeeee",
+          borderColor: "#edcaca",
+          color: "#8b2f2f",
+        };
+      default:
+        return {
+          background: "#f5f6f7",
+          borderColor: "#e3e5e8",
+          color: "#4b5563",
+        };
+    }
+  },
+
+  applyStatusBoxStyle(element, level) {
+    if (!element) {
+      return;
+    }
+    let tokens = this.styleTokens(level);
+    element.style.display = "block";
+    element.style.margin = "0 0 12px";
+    element.style.padding = "0 12px";
+    element.style.borderRadius = "8px";
+    element.style.border = "1px solid " + tokens.borderColor;
+    element.style.background = tokens.background;
+    element.style.color = tokens.color;
+    element.style.lineHeight = "40px";
+    element.style.minHeight = "40px";
+    element.style.maxHeight = "40px";
+    element.style.boxSizing = "border-box";
+    element.style.whiteSpace = "nowrap";
+    element.style.overflow = "hidden";
+    element.style.textOverflow = "ellipsis";
+    element.dataset.state = level || "idle";
+  },
+
+  isInlineFeedback(key) {
+    return key === "config" || key === "port";
+  },
+
+  applyFeedbackBoxStyle(element, level, key) {
+    if (!element) {
+      return;
+    }
+    let tokens = this.styleTokens(level);
+    element.style.display = "block";
+    if (this.isInlineFeedback(key)) {
+      element.style.display = "flex";
+      element.style.alignItems = "center";
+      element.style.margin = "0 0 0 12px";
+      element.style.padding = "0";
+      element.style.lineHeight = "24px";
+      element.style.minHeight = "24px";
+      element.style.maxHeight = "24px";
+    } else {
+      element.style.display = "flex";
+      element.style.alignItems = "center";
+      element.style.margin = "6px 0 14px";
+      element.style.padding = "0";
+      element.style.lineHeight = "24px";
+      element.style.minHeight = "24px";
+      element.style.maxHeight = "24px";
+    }
+    element.style.borderRadius = "0";
+    element.style.border = "none";
+    element.style.background = "transparent";
+    element.style.color = tokens.color;
+    element.style.boxSizing = "border-box";
+    element.style.whiteSpace = "nowrap";
+    element.style.overflow = "hidden";
+    element.style.textOverflow = "ellipsis";
+    element.dataset.state = level || "idle";
+  },
+
+  renderMessageBox(element, message, level, kind, key) {
+    if (!element) {
+      return;
+    }
+    if (kind === "status") {
+      this.applyStatusBoxStyle(element, level);
+    } else {
+      this.applyFeedbackBoxStyle(element, level, key);
+    }
+    element.textContent = message || this.FEEDBACK_PLACEHOLDER;
+  },
+
+  renderActionFeedback(key, message, level) {
+    let element = this.feedbackElements ? this.feedbackElements[key] : null;
+    this.renderMessageBox(element, message, level || "idle", "feedback", key);
+  },
+
+  bindTransientMessageReset() {
+    if (this.transientMessageEventsBound || !this.root) {
+      return;
+    }
+
+    let reset = () => {
+      this.clearTransientFeedback();
+    };
+    this.root.addEventListener("focusin", reset, true);
+    this.root.addEventListener("input", reset, true);
+    this.root.addEventListener("change", reset, true);
+    this.transientMessageEventsBound = true;
+  },
+
+  bindUnload() {
+    window.addEventListener("unload", () => {
+      this.stopStatusPolling();
+    });
+  },
+
+  startStatusPolling() {
+    if (this.statusPollTimer) {
+      return;
+    }
+    this.statusPollTimer = window.setInterval(() => {
+      this.refreshRuntimeServiceStatus(true);
+    }, this.STATUS_POLL_INTERVAL_MS);
+  },
+
+  stopStatusPolling() {
+    if (!this.statusPollTimer) {
+      return;
+    }
+    window.clearInterval(this.statusPollTimer);
+    this.statusPollTimer = null;
+  },
+
+  getPluginController() {
+    try {
+      let parentWindow = ZeroMcpPluginCommon.getPickerParentWindow(window);
+      if (parentWindow && parentWindow.ZeroMcpPlugin) {
+        return parentWindow.ZeroMcpPlugin;
+      }
+    } catch (error) {}
+
+    try {
+      if (typeof Zotero !== "undefined" && Zotero && typeof Zotero.getMainWindow === "function") {
+        let mainWindow = Zotero.getMainWindow();
+        if (mainWindow && mainWindow.ZeroMcpPlugin) {
+          return mainWindow.ZeroMcpPlugin;
+        }
+      }
+    } catch (error) {}
+
+    return null;
+  },
+
+  ensureDefaults() {
+    if (!this.getStringPref("sharedSecret")) {
+      this.setStringPref("sharedSecret", this.generateToken());
+    }
+    if (!this.getStringPref("bufferDirectory")) {
+      let path = this.defaultBufferDirectory();
+      if (path) {
+        this.setStringPref("bufferDirectory", path);
+      }
+    }
+    if (!this.isAllowedLinkMode(this.getStringPref("defaultLinkMode"))) {
+      this.setStringPref("defaultLinkMode", this.DEFAULT_LINK_MODE);
+    }
+    if (!this.isAllowedDuplicatePolicy(this.getStringPref("defaultDuplicatePolicy"))) {
+      this.setStringPref("defaultDuplicatePolicy", this.DEFAULT_DUPLICATE_POLICY);
+    }
   },
 
   loadPrefsIntoUI() {
     this.mcpExecutablePath.value = this.getConfiguredMcpExecutablePath();
     this.bufferDirectory.value = this.getBufferDirectory();
     this.mutationsEnabled.checked = this.getBoolPref("mutationsEnabled", true);
-    this.autoStartMcp.checked = this.getBoolPref("autoStartMcp", true);
-    this.keepHelperRunning.checked = this.getBoolPref("keepHelperRunning", true);
     this.localMcpPort.value = this.getLocalMcpPort();
     this.sharedSecret.value = this.getStringPref("sharedSecret");
     this.defaultLinkMode.value = this.getLinkMode();
     this.defaultDuplicatePolicy.value = this.getDuplicatePolicy();
-    this.setTokenActionStatus("当前令牌已保留。");
-    this.setTestMcpStatus("");
-    this.setServiceActionStatus("");
-    this.refreshDerivedFields();
-    this.refreshRuntimeServiceStatus();
+    this.renderStatus(null);
+    this.clearTransientActionMessages();
   },
 
-  refreshDerivedFields() {
+  async refreshRuntimeServiceStatus(preserveTemporaryStatus) {
+    if (this.statusRefreshInFlight) {
+      return this.lastRuntimeSnapshot;
+    }
+
+    let controller = this.getPluginController();
+    if (!controller || typeof controller.refreshHelperRuntimeState !== "function") {
+      this.lastRuntimeSnapshot = {
+        desiredPort: this.getLocalMcpPort(),
+        helperState: "error",
+        lastErrorCode: "PLUGIN_CONTROLLER_UNAVAILABLE",
+        statusMessageKey: "controller-unavailable",
+      };
+      this.renderStatus(this.lastRuntimeSnapshot, preserveTemporaryStatus);
+      return this.lastRuntimeSnapshot;
+    }
+
+    this.statusRefreshInFlight = true;
+    try {
+      this.lastRuntimeSnapshot = await controller.refreshHelperRuntimeState("preferences-refresh");
+    } catch (error) {
+      Zotero.logError(error);
+      this.lastRuntimeSnapshot = controller.getHelperRuntimeState
+        ? controller.getHelperRuntimeState()
+        : {
+            desiredPort: this.getLocalMcpPort(),
+            helperState: "error",
+            lastErrorCode: error.code || "STATUS_REFRESH_FAILED",
+            statusMessageKey: "restart-rollback",
+          };
+    } finally {
+      this.statusRefreshInFlight = false;
+    }
+
+    this.renderStatus(this.lastRuntimeSnapshot, preserveTemporaryStatus);
+    return this.lastRuntimeSnapshot;
+  },
+
+  renderStatus(snapshot, preserveTemporaryStatus) {
     if (!this.status) {
       return;
     }
-    let parts = [this.serviceStateLabel || "服务未启动", "端口 " + this.getLocalMcpPort()];
-    if (this.getConfiguredMcpExecutablePath()) {
-      parts.push("已选择驱动器");
+    let presentation;
+    if (preserveTemporaryStatus && this.temporaryStatusMessage) {
+      presentation = {
+        message: this.temporaryStatusMessage,
+        level: this.temporaryStatusLevel || "idle",
+      };
+    } else if (this.temporaryStatusMessage) {
+      presentation = {
+        message: this.temporaryStatusMessage,
+        level: this.temporaryStatusLevel || "idle",
+      };
+    } else {
+      presentation = this.presentationForRuntimeState(snapshot || this.lastRuntimeSnapshot);
     }
-    this.status.textContent = "当前状态：" + parts.join(" | ");
+    this.renderMessageBox(
+      this.status,
+      presentation && presentation.message,
+      (presentation && presentation.level) || "idle",
+      "status"
+    );
+  },
+
+  helperErrorStatusMessage(code) {
+    switch (code) {
+      case "HELPER_PATH_NOT_FOUND":
+        return "未找到所选文件，请重新选择。";
+      case "HELPER_PATH_IS_DIRECTORY":
+        return "你选择的是文件夹，请选择可执行文件。";
+      case "HELPER_PATH_NOT_EXECUTABLE":
+        return "当前文件无法运行，请检查是否完整解压。";
+      case "HELPER_LAYOUT_INCOMPLETE":
+        return "当前目录不完整，请重新解压后再选择。";
+      default:
+        return "";
+    }
+  },
+
+  helperErrorActionMessage(code) {
+    switch (code) {
+      case "HELPER_PATH_IS_DIRECTORY":
+        return "请重新选择文件。";
+      case "HELPER_LAYOUT_INCOMPLETE":
+        return "请重新解压整个目录后再选择。";
+      case "HELPER_PATH_NOT_EXECUTABLE":
+        return "请确认你选择的是可运行文件。";
+      case "HELPER_PATH_NOT_FOUND":
+        return "文件可能已被移动，请重新选择。";
+      default:
+        return "";
+    }
+  },
+
+  presentationForRuntimeState(snapshot) {
+    if (!snapshot) {
+      return {
+        message: "请先选择本地服务程序。",
+        level: "idle",
+      };
+    }
+
+    switch (snapshot.statusMessageKey) {
+      case "available":
+        return {
+          message: "本地 MCP 服务可用，运行端口 " + snapshot.desiredPort + "。",
+          level: "success",
+        };
+      case "starting":
+      case "starting-slow":
+      case "checking":
+      case "recovery-running":
+        return {
+          message: "未检测到 MCP 服务，正在尝试启动。",
+          level: "loading",
+        };
+      case "restarting":
+        return {
+          message: "已更新配置，正在重启 MCP 服务。",
+          level: "loading",
+        };
+      case "port-conflict":
+        return {
+          message: "端口 " + snapshot.desiredPort + " 已被其他程序占用，请更换端口。",
+          level: "warning",
+        };
+      case "restart-rollback":
+      case "recovery-exhausted":
+      case "stop-failed":
+        return {
+          message: "MCP 服务重启失败，已恢复到上一次有效配置。",
+          level: "error",
+        };
+      case "helper-path-missing":
+        return {
+          message: "请先选择本地服务程序。",
+          level: "idle",
+        };
+      case "helper-path-not-found":
+      case "helper-path-is-directory":
+      case "helper-path-not-executable":
+      case "helper-layout-incomplete":
+        return {
+          message: this.helperErrorStatusMessage(snapshot.lastErrorCode || ""),
+          level: "warning",
+        };
+      case "controller-unavailable":
+        return {
+          message: "设置页暂时不可用，请重启 Zotero。",
+          level: "error",
+        };
+      default:
+        if (snapshot.helperState === "running") {
+          return {
+            message: "本地 MCP 服务可用，运行端口 " + snapshot.desiredPort + "。",
+            level: "success",
+          };
+        }
+        if (snapshot.lastErrorCode === "PORT_IN_USE") {
+          return {
+            message: "端口 " + snapshot.desiredPort + " 已被其他程序占用，请更换端口。",
+            level: "warning",
+          };
+        }
+        if (this.helperErrorStatusMessage(snapshot.lastErrorCode || "")) {
+          return {
+            message: this.helperErrorStatusMessage(snapshot.lastErrorCode || ""),
+            level: "warning",
+          };
+        }
+        if (snapshot.lastErrorCode) {
+          return {
+            message: "MCP 服务重启失败，已恢复到上一次有效配置。",
+            level: "error",
+          };
+        }
+        return {
+          message: "请先选择本地服务程序。",
+          level: "idle",
+        };
+    }
+  },
+
+  messageForRuntimeState(snapshot) {
+    return this.presentationForRuntimeState(snapshot).message;
+  },
+
+  setTemporaryStatus(message, level) {
+    this.temporaryStatusMessage = message || "";
+    this.temporaryStatusLevel = level || "idle";
+    this.renderStatus(this.lastRuntimeSnapshot, true);
+  },
+
+  clearTransientActionMessages() {
+    this.setConfigActionStatus("", "idle");
+    this.setPortActionStatus("", "idle");
+    this.setTokenActionStatus("", "idle");
+  },
+
+  clearTransientFeedback() {
+    this.clearTransientActionMessages();
+    this.temporaryStatusMessage = "";
+    this.temporaryStatusLevel = "idle";
+    this.renderStatus(this.lastRuntimeSnapshot);
   },
 
   async chooseMcpExecutablePath() {
-    let selected = await this.pickFilePath("选择 MCP 驱动器", [
-      ["可执行文件", "*.exe"],
-      ["所有文件", "*.*"],
-    ]);
+    let filters = ZeroMcpPluginCommon.isWindows()
+      ? [
+          ["可执行文件", "*.exe"],
+          ["所有文件", "*.*"],
+        ]
+      : [["所有文件", "*"]];
+    let selected = await ZeroMcpPluginCommon.pickFilePath(window, "选择 MCP helper 可执行文件", filters);
     if (!selected) {
       return;
     }
-    this.setStringPref("mcpExecutablePath", selected);
     this.mcpExecutablePath.value = selected;
-    this.refreshDerivedFields();
-    this.setTestMcpStatus("已更新 MCP 驱动器路径。");
+    await this.applyExecutablePath(selected);
   },
 
-  resetMcpExecutablePath() {
-    this.setStringPref("mcpExecutablePath", "");
+  async resetMcpExecutablePath() {
     this.mcpExecutablePath.value = "";
-    this.refreshDerivedFields();
-    this.setTestMcpStatus("已清空 MCP 驱动器路径。");
+    await this.applyExecutablePath("");
   },
 
-  saveMcpExecutablePath() {
-    let value = this.mcpExecutablePath.value.trim();
-    this.setStringPref("mcpExecutablePath", value);
-    this.mcpExecutablePath.value = value;
-    this.refreshDerivedFields();
+  async saveMcpExecutablePath() {
+    await this.applyExecutablePath(this.mcpExecutablePath.value.trim());
+  },
+
+  async applyExecutablePath(value) {
+    let normalized = String(value || "").trim();
+    let previous = this.getConfiguredMcpExecutablePath();
+    let controller = this.getPluginController();
+
+    if (previous !== normalized) {
+      this.setStringPref("mcpExecutablePath", normalized);
+    }
+    this.mcpExecutablePath.value = normalized;
+
+    try {
+      if (controller && typeof controller.applyExecutablePathChange === "function") {
+        await controller.applyExecutablePathChange(normalized);
+      }
+      this.setConfigActionStatus(
+        normalized ? "路径已保存。" : "已清空路径。",
+        "success"
+      );
+    } catch (error) {
+      Zotero.logError(error);
+
+      // Keep the user's selected path even if the helper fails to start.
+      if (this.getConfiguredMcpExecutablePath() !== normalized) {
+        this.setStringPref("mcpExecutablePath", normalized);
+      }
+      this.mcpExecutablePath.value = normalized;
+
+      if (error.code === "PORT_IN_USE") {
+        this.setTemporaryStatus(
+          "端口 " + this.getLocalMcpPort() + " 已被其他程序占用，请更换端口。",
+          "warning"
+        );
+        this.setConfigActionStatus(normalized ? "路径已保存。" : "已清空路径。", "warning");
+      } else if (this.helperErrorStatusMessage(error.code || "")) {
+        this.setTemporaryStatus(this.helperErrorStatusMessage(error.code || ""), "warning");
+        this.setConfigActionStatus(this.helperErrorActionMessage(error.code || ""), "warning");
+      } else {
+        this.setTemporaryStatus("MCP 服务重启失败，已恢复到上一次有效配置。", "error");
+        this.setConfigActionStatus(
+          normalized ? "路径已保存，请点击“测试连接”重试。" : "已清空路径。",
+          normalized ? "warning" : "success"
+        );
+      }
+    }
+
+    await this.refreshRuntimeServiceStatus(true);
   },
 
   async chooseBufferDirectory() {
-    let selected = await this.pickDirectoryPath("选择文件缓冲目录");
+    let selected = await ZeroMcpPluginCommon.pickDirectoryPath(window, "选择文件缓冲目录");
     if (!selected) {
       return;
     }
-    this.setStringPref("bufferDirectory", selected);
     this.bufferDirectory.value = selected;
-    this.refreshDerivedFields();
+    this.saveBufferDirectory();
   },
 
   resetBufferDirectory() {
     let value = this.defaultBufferDirectory();
     this.setStringPref("bufferDirectory", value);
     this.bufferDirectory.value = value;
-    this.refreshDerivedFields();
-    this.setTestMcpStatus("已恢复默认缓冲目录。");
   },
 
   saveBufferDirectory() {
     let value = this.bufferDirectory.value.trim() || this.defaultBufferDirectory();
     this.setStringPref("bufferDirectory", value);
     this.bufferDirectory.value = value;
-    this.refreshDerivedFields();
   },
 
   saveMutationsEnabled() {
     this.setBoolPref("mutationsEnabled", !!this.mutationsEnabled.checked);
   },
 
-  saveAutoStartMcp() {
-    this.setBoolPref("autoStartMcp", !!this.autoStartMcp.checked);
-  },
-
-  saveKeepHelperRunning() {
-    this.setBoolPref("keepHelperRunning", !!this.keepHelperRunning.checked);
-    this.refreshDerivedFields();
-    this.setTestMcpStatus(
-      this.keepHelperRunning.checked
-        ? "已开启常驻运行。由插件启动的 MCP 服务在关闭 Zotero 后仍会继续运行。"
-        : "已关闭常驻运行。由插件启动的 MCP 服务会在 Zotero 退出时自动关闭。"
-    );
-    this.setServiceActionStatus("");
-  },
-
   async saveLocalMcpPort() {
     let previous = this.getLocalMcpPort();
     let normalized = this.normalizePort(this.localMcpPort.value);
-    let serviceWasReachable = false;
-
-    if (String(previous) !== String(normalized)) {
-      let previousProbe = await this.probeMcpConnection("http://127.0.0.1:" + previous + "/mcp");
-      serviceWasReachable = previousProbe.ok;
-    }
-
-    this.setStringPref("localMcpPort", normalized);
     this.localMcpPort.value = normalized;
-    this.refreshDerivedFields();
 
     if (String(previous) === String(normalized)) {
-      this.setServiceActionStatus("端口未变化，当前客户端配置仍然有效。");
       return;
     }
 
-    if (serviceWasReachable) {
-      this.setServiceActionStatus("端口已更新为 " + normalized + "，正在自动重启 MCP 服务。");
-      try {
-        await this.restartManagedMcpProcess();
-        this.setServiceActionStatus("端口已更新为 " + normalized + "。请重新复制客户端配置。");
-        return;
-      } catch (error) {
-        this.setServiceActionStatus(
-          "端口已更新为 " +
-            normalized +
-            "，但自动重启失败。请手动关闭并重新启动 MCP 服务，然后重新复制客户端配置。"
-        );
-        Zotero.logError(error);
-        return;
+    let controller = this.getPluginController();
+    this.setTemporaryStatus("已更新配置，正在重启 MCP 服务。", "loading");
+
+    try {
+      if (controller && typeof controller.applyPortChange === "function") {
+        await controller.applyPortChange(normalized);
+      } else {
+        this.setStringPref("localMcpPort", normalized);
+      }
+      this.setPortActionStatus("端口已更新为 " + normalized + "。", "success");
+      this.temporaryStatusMessage = "";
+      this.temporaryStatusLevel = "idle";
+    } catch (error) {
+      Zotero.logError(error);
+      this.localMcpPort.value = previous;
+      this.setStringPref("localMcpPort", previous);
+      if (error.code === "PORT_IN_USE") {
+        this.setTemporaryStatus("端口 " + normalized + " 已被其他程序占用，请更换端口。", "warning");
+        this.setPortActionStatus("未保存新端口，当前仍使用端口 " + previous + "。", "warning");
+      } else {
+        this.setTemporaryStatus("MCP 服务重启失败，已恢复到上一次有效配置。", "error");
+        this.setPortActionStatus("端口切换失败，当前仍使用端口 " + previous + "。", "error");
       }
     }
 
-    this.setServiceActionStatus("端口已更新为 " + normalized + "。请重新复制客户端配置。");
+    await this.refreshRuntimeServiceStatus(true);
   },
 
   async resetLocalMcpPort() {
@@ -180,134 +598,83 @@ var ZeroMcpPluginPreferences = {
   },
 
   async regenerateSecret() {
-    let secret = this.generateToken();
-    this.setStringPref("sharedSecret", secret);
-    this.sharedSecret.value = secret;
-    this.setTokenActionStatus("已生成新令牌，正在重启 MCP 服务...");
-    this.setServiceActionStatus("");
+    let controller = this.getPluginController();
+    let previous = this.getStringPref("sharedSecret");
+    let nextSecret = this.generateToken();
+    this.sharedSecret.value = nextSecret;
+    this.setTemporaryStatus("已更新配置，正在重启 MCP 服务。", "loading");
 
     try {
-      await this.restartManagedMcpProcess();
-      this.setTokenActionStatus("已生成新令牌，并已重启 MCP 服务。");
+      if (controller && typeof controller.applySharedSecretChange === "function") {
+        await controller.applySharedSecretChange(nextSecret);
+      } else {
+        this.setStringPref("sharedSecret", nextSecret);
+      }
+      this.sharedSecret.value = this.getStringPref("sharedSecret");
+      this.setTokenActionStatus("已生成新令牌。", "success");
+      this.temporaryStatusMessage = "";
+      this.temporaryStatusLevel = "idle";
     } catch (error) {
-      this.setTokenActionStatus("已生成新令牌，但重启失败。请手动测试 MCP 服务。");
       Zotero.logError(error);
+      this.sharedSecret.value = previous;
+      this.setStringPref("sharedSecret", previous);
+      this.setTemporaryStatus("MCP 服务重启失败，已恢复到上一次有效配置。", "error");
+      this.setTokenActionStatus("生成失败，当前仍使用原令牌。", "error");
     }
+
+    await this.refreshRuntimeServiceStatus(true);
   },
 
   async testMcpConnection() {
-    this.setTestMcpStatus("正在检测本地 MCP 服务...");
-
-    let probe = await this.probeMcpConnection();
-    if (probe.ok) {
-      this.setServiceStateLabel("服务已启动");
-      this.setTestMcpStatus("本地 MCP 服务可用，HTTP " + probe.status + "。");
+    let controller = this.getPluginController();
+    if (!controller || typeof controller.testOrRecoverHelper !== "function") {
+      this.setTemporaryStatus("设置页暂时不可用，请重启 Zotero。", "error");
       return;
     }
 
-    let driverPath = this.getMcpExecutablePath();
-    if (!driverPath) {
-      this.setServiceStateLabel("服务未启动");
-      this.setTestMcpStatus("未检测到本地 MCP 服务，请先选择 MCP 驱动器路径。");
-      if (probe.error) {
-        Zotero.logError(probe.error);
+    let snapshot = await this.refreshRuntimeServiceStatus();
+    if (snapshot && snapshot.helperState === "running") {
+      this.setTemporaryStatus("本地 MCP 服务可用，运行端口 " + snapshot.desiredPort + "。", "success");
+      return;
+    }
+
+    this.setTemporaryStatus("未检测到 MCP 服务，正在尝试启动。", "loading");
+    try {
+      snapshot = await controller.testOrRecoverHelper("preferences-test");
+      this.lastRuntimeSnapshot = snapshot;
+      if (snapshot && snapshot.helperState === "running") {
+        this.setTemporaryStatus("本地 MCP 服务可用，运行端口 " + snapshot.desiredPort + "。", "success");
+      } else {
+        this.setTemporaryStatus(
+          this.messageForRuntimeState(snapshot),
+          this.presentationForRuntimeState(snapshot).level
+        );
       }
-      return;
-    }
-
-    this.setTestMcpStatus("未检测到本地 MCP 服务，正在尝试启动...");
-    try {
-      this.startManagedMcpProcess();
     } catch (error) {
-      this.setServiceStateLabel("服务未启动");
-      this.setTestMcpStatus("启动失败，请检查驱动器路径、端口和权限。");
       Zotero.logError(error);
-      return;
+      if (error.code === "PORT_IN_USE") {
+        this.setTemporaryStatus(
+          "端口 " + this.getLocalMcpPort() + " 已被其他程序占用，请更换端口。",
+          "warning"
+        );
+      } else if (this.helperErrorStatusMessage(error.code || "")) {
+        this.setTemporaryStatus(this.helperErrorStatusMessage(error.code || ""), "warning");
+        this.setConfigActionStatus(this.helperErrorActionMessage(error.code || ""), "warning");
+      } else {
+        this.setTemporaryStatus("MCP 服务重启失败，已恢复到上一次有效配置。", "error");
+      }
     }
-
-    probe = await this.waitForMcpConnection(12, 500);
-    if (probe.ok) {
-      this.setServiceStateLabel("服务已启动");
-      this.setTestMcpStatus("已启动本地 MCP 服务，HTTP " + probe.status + "。");
-      return;
-    }
-
-    this.setServiceStateLabel("服务未启动");
-    this.setTestMcpStatus("未检测到本地 MCP 服务，请检查驱动器路径、端口和进程状态。");
-    if (probe.error) {
-      Zotero.logError(probe.error);
-    }
-  },
-
-  async startMcpService() {
-    this.setServiceActionStatus("正在启动本地 MCP 服务...");
-
-    let probe = await this.probeMcpConnection();
-    if (probe.ok) {
-      this.setServiceStateLabel("服务已启动");
-      this.setServiceActionStatus("本地 MCP 服务已在运行，HTTP " + probe.status + "。");
-      return;
-    }
-
-    let driverPath = this.getMcpExecutablePath();
-    if (!driverPath) {
-      this.setServiceStateLabel("服务未启动");
-      this.setServiceActionStatus("未配置 MCP 驱动器路径，无法启动本地 MCP 服务。");
-      return;
-    }
-
-    try {
-      this.startManagedMcpProcess();
-    } catch (error) {
-      this.setServiceStateLabel("服务未启动");
-      this.setServiceActionStatus("启动失败，请检查驱动器路径、端口和权限。");
-      Zotero.logError(error);
-      return;
-    }
-
-    probe = await this.waitForMcpConnection(12, 500);
-    if (probe.ok) {
-      this.setServiceStateLabel("服务已启动");
-      this.setServiceActionStatus("已手动启动本地 MCP 服务，HTTP " + probe.status + "。");
-      return;
-    }
-
-    this.setServiceStateLabel("服务未启动");
-    this.setServiceActionStatus("启动后仍无法连接，请检查驱动器路径、端口和权限。");
-    if (probe.error) {
-      Zotero.logError(probe.error);
-    }
-  },
-
-  async stopMcpService() {
-    let executablePath = this.getMcpExecutablePath();
-    if (!executablePath) {
-      this.setServiceActionStatus("未配置 MCP 驱动器路径，无法关闭 MCP 服务。");
-      return;
-    }
-
-    this.setServiceActionStatus("正在关闭本地 MCP 服务...");
-    this.stopManagedMcpProcesses(executablePath);
-    let closed = await this.waitForMcpShutdown(8, 300);
-
-    if (closed) {
-      this.setServiceStateLabel("服务已关闭");
-      this.setServiceActionStatus("已关闭当前 MCP 驱动器对应的服务。");
-      return;
-    }
-
-    this.setServiceStateLabel("服务未完全关闭");
-    this.setServiceActionStatus("已执行关闭指令，但端口仍可访问。");
+    this.renderStatus(this.lastRuntimeSnapshot, true);
   },
 
   copyCodexConfig() {
     this.copyToClipboard(this.buildCodexConfigSnippet());
-    this.setTestMcpStatus("已复制 Codex 配置。");
+    this.setConfigActionStatus("已复制 Codex 配置。", "success");
   },
 
   copyClaudeCodeConfig() {
     this.copyToClipboard(this.buildClaudeCodeConfigSnippet());
-    this.setTestMcpStatus("已复制 Claude Code 配置。");
+    this.setConfigActionStatus("已复制 Claude Code 配置。", "success");
   },
 
   copyToClipboard(text) {
@@ -326,127 +693,6 @@ var ZeroMcpPluginPreferences = {
     let value = this.defaultDuplicatePolicy.value || this.DEFAULT_DUPLICATE_POLICY;
     this.setStringPref("defaultDuplicatePolicy", value);
     this.defaultDuplicatePolicy.value = value;
-  },
-
-  ensureDefaults() {
-    if (!this.hasUserPref("mutationsEnabled")) {
-      this.setBoolPref("mutationsEnabled", true);
-    }
-    if (!this.hasUserPref("autoStartMcp")) {
-      this.setBoolPref("autoStartMcp", true);
-    }
-    if (!this.hasUserPref("keepHelperRunning")) {
-      this.setBoolPref("keepHelperRunning", true);
-    }
-    if (!this.getStringPref("sharedSecret")) {
-      this.setStringPref("sharedSecret", this.generateToken());
-    }
-    if (!this.getStringPref("bufferDirectory")) {
-      let path = this.defaultBufferDirectory();
-      if (path) {
-        this.setStringPref("bufferDirectory", path);
-      }
-    }
-    if (!this.isAllowedLinkMode(this.getStringPref("defaultLinkMode"))) {
-      this.setStringPref("defaultLinkMode", this.DEFAULT_LINK_MODE);
-    }
-    if (!this.isAllowedDuplicatePolicy(this.getStringPref("defaultDuplicatePolicy"))) {
-      this.setStringPref("defaultDuplicatePolicy", this.DEFAULT_DUPLICATE_POLICY);
-    }
-  },
-
-  getBoolPref(name, fallback) {
-    try {
-      let value = Zotero.Prefs.get(this.PREF_BRANCH + name, true);
-      return value === undefined ? fallback : !!value;
-    } catch (error) {
-      return fallback;
-    }
-  },
-
-  hasUserPref(name) {
-    try {
-      return Services.prefs.prefHasUserValue(this.PREF_BRANCH + name);
-    } catch (error) {
-      return false;
-    }
-  },
-
-  getStringPref(name) {
-    try {
-      let value = Zotero.Prefs.get(this.PREF_BRANCH + name, true);
-      return value ? String(value) : "";
-    } catch (error) {
-      return "";
-    }
-  },
-
-  setBoolPref(name, value) {
-    Zotero.Prefs.set(this.PREF_BRANCH + name, !!value, true);
-  },
-
-  setStringPref(name, value) {
-    Zotero.Prefs.set(this.PREF_BRANCH + name, String(value || ""), true);
-  },
-
-  getManagedMcpPid() {
-    return this.getStringPref("mcpManagedPid").trim();
-  },
-
-  setManagedMcpPid(pid) {
-    this.setStringPref("mcpManagedPid", pid ? String(pid) : "");
-  },
-
-  setTokenActionStatus(message) {
-    if (this.tokenActionStatus) {
-      this.tokenActionStatus.textContent = message || "";
-    }
-  },
-
-  setServiceActionStatus(message) {
-    if (this.serviceActionStatus) {
-      this.serviceActionStatus.textContent = message || "";
-    }
-  },
-
-  setTestMcpStatus(message) {
-    if (this.testMcpStatus) {
-      this.testMcpStatus.textContent = message || "";
-    }
-  },
-
-  setServiceStateLabel(label) {
-    this.serviceStateLabel = label || "服务未启动";
-    this.refreshDerivedFields();
-  },
-
-  async refreshRuntimeServiceStatus() {
-    let probe = await this.probeMcpConnection();
-    this.setServiceStateLabel(probe.ok ? "服务已启动" : "服务未启动");
-  },
-
-  normalizePort(value) {
-    let parsed = parseInt(String(value || "").trim() || "8000", 10);
-    if (!parsed || parsed < 1 || parsed > 65535) {
-      return "8000";
-    }
-    return String(parsed);
-  },
-
-  getLocalMcpPort() {
-    return this.normalizePort(this.getStringPref("localMcpPort") || "8000");
-  },
-
-  getLocalMcpBaseURL() {
-    return "http://127.0.0.1:" + this.getLocalMcpPort();
-  },
-
-  getLocalMcpURL() {
-    return this.getLocalMcpBaseURL() + "/mcp";
-  },
-
-  getLocalBridgeProxyURL() {
-    return this.getLocalMcpBaseURL() + "/zero-mcp";
   },
 
   buildCodexConfigSnippet() {
@@ -472,331 +718,75 @@ var ZeroMcpPluginPreferences = {
     );
   },
 
-  async probeMcpConnection(url) {
+  getBoolPref(name, fallback) {
     try {
-      let response = await fetch(url || this.getLocalMcpURL(), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: "{}",
-      });
-      return { ok: true, status: response.status };
+      let value = Zotero.Prefs.get(this.PREF_BRANCH + name, true);
+      return value === undefined ? fallback : !!value;
     } catch (error) {
-      return { ok: false, error };
+      return fallback;
     }
   },
 
-  async waitForMcpConnection(maxAttempts, delayMs) {
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      let probe = await this.probeMcpConnection();
-      if (probe.ok) {
-        return probe;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-    }
-    return this.probeMcpConnection();
-  },
-
-  async waitForMcpShutdown(maxAttempts, delayMs) {
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      let probe = await this.probeMcpConnection();
-      if (!probe.ok) {
-        return true;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-    }
-    let finalProbe = await this.probeMcpConnection();
-    return !finalProbe.ok;
-  },
-
-  async restartManagedMcpProcess() {
-    let executablePath = this.getMcpExecutablePath();
-    if (!executablePath) {
-      throw new Error("Missing MCP executable path");
-    }
-
-    this.stopManagedMcpProcesses(executablePath);
-    await new Promise((resolve) => window.setTimeout(resolve, 400));
-    this.startManagedMcpProcess();
-
-    let probe = await this.waitForMcpConnection(12, 500);
-    if (!probe.ok) {
-      throw probe.error || new Error("MCP restart did not become reachable");
-    }
-    return probe;
-  },
-
-  startManagedMcpProcess() {
-    let executablePath = this.getMcpExecutablePath();
-    if (!executablePath) {
-      throw new Error("Missing MCP executable path");
-    }
-
-    let powershell = this.getWindowsPowerShellPath();
-    let process = Components.classes["@mozilla.org/process/util;1"]
-      .createInstance(Components.interfaces.nsIProcess);
-    process.init(powershell);
-    process.startHidden = true;
-
-    let pidFile = this.createTempPidFilePath("zero-mcp-start");
-    this.setManagedMcpPid("");
-    let args = ["-NoProfile", "-Command", this.buildManagedMcpCommand(executablePath, pidFile)];
-    process.runw(true, args, args.length);
-    this.readManagedPidFromFile(pidFile);
-    this.setBoolPref("mcpManagedByPlugin", true);
-  },
-
-  buildManagedMcpCommand(executablePath, pidFile) {
-    let command = this.escapeForPowerShell(executablePath);
-    let bridgeURL = this.escapeForPowerShell(this.getLocalBridgeProxyURL());
-    let bridgeToken = this.escapeForPowerShell(this.getStringPref("sharedSecret"));
-    let localMcpPort = this.getLocalMcpPort();
-    return [
-      "$env:ZOTERO_NO_CLAUDE='true'",
-      "$env:ZOTERO_LOCAL='true'",
-      "$env:ZOTERO_LIBRARY_ID='0'",
-      "$env:ZOTERO_DESKTOP_BRIDGE_TIMEOUT='120'",
-      "$env:ZOTERO_DESKTOP_BRIDGE_PROXY_TIMEOUT='120'",
-      "$env:ZOTERO_DESKTOP_BRIDGE_URL='" + bridgeURL + "'",
-      "$env:ZOTERO_DESKTOP_BRIDGE_TOKEN='" + bridgeToken + "'",
-      "$proc = Start-Process -FilePath '" +
-        command +
-        "' -ArgumentList 'serve','--transport','streamable-http','--host','127.0.0.1','--port','" +
-        localMcpPort +
-        "' -WindowStyle Hidden -PassThru",
-      "$proc.Id | Set-Content -Path '" + this.escapeForPowerShell(pidFile) + "' -Encoding UTF8",
-    ].join("; ");
-  },
-
-  buildStopManagedMcpCommand(executablePath, managedPid) {
-    let targetExecutable = String(executablePath || "").trim();
-    let normalizedPid = String(managedPid || "").trim();
-    return normalizedPid
-      ? [
-          "$pidToStop=" + parseInt(normalizedPid, 10),
-          "Stop-Process -Id $pidToStop -Force -ErrorAction SilentlyContinue",
-          "$target='" + this.escapeForPowerShell(targetExecutable) + "'",
-          "Get-CimInstance Win32_Process -Filter \"name = 'zotero-mcp.exe'\" | Where-Object { $_.ExecutablePath -eq $target } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-        ].join("; ")
-      : [
-          "$target='" + this.escapeForPowerShell(targetExecutable) + "'",
-          "Get-CimInstance Win32_Process -Filter \"name = 'zotero-mcp.exe'\" | Where-Object { $_.ExecutablePath -eq $target } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-        ].join("; ");
-  },
-
-  stopManagedMcpProcesses(executablePath) {
-    let targetExecutable = String(executablePath || this.getMcpExecutablePath() || "").trim();
-    if (!targetExecutable) {
-      return;
-    }
-
-    let powershell = this.getWindowsPowerShellPath();
-    let process = Components.classes["@mozilla.org/process/util;1"]
-      .createInstance(Components.interfaces.nsIProcess);
-    process.init(powershell);
-    process.startHidden = true;
-
-    let command = this.buildStopManagedMcpCommand(targetExecutable, this.getManagedMcpPid());
-    let args = ["-NoProfile", "-Command", command];
-    process.runw(true, args, args.length);
-    this.setBoolPref("mcpManagedByPlugin", false);
-    this.setManagedMcpPid("");
-  },
-
-  createTempPidFilePath(prefix) {
-    let tempFile = Services.dirsvc.get("TmpD", Components.interfaces.nsIFile);
-    tempFile.append((prefix || "zero-mcp") + "-" + Date.now() + "-" + Math.random().toString(16).slice(2) + ".txt");
-    return tempFile.path;
-  },
-
-  readManagedPidFromFile(path) {
-    if (!path) {
-      return;
-    }
+  getStringPref(name) {
     try {
-      let file = Zotero.File.pathToFile(path);
-      if (!file.exists()) {
-        return;
-      }
-      let pid = String(Zotero.File.getContents(path) || "").trim();
-      if (pid) {
-        this.setManagedMcpPid(pid);
-      }
-      file.remove(false);
-    } catch (error) {
-      Zotero.logError(error);
-    }
-  },
-
-  getWindowsPowerShellPath() {
-    let windir = Services.dirsvc.get("WinD", Components.interfaces.nsIFile);
-    let file = windir.clone();
-    file.append("System32");
-    file.append("WindowsPowerShell");
-    file.append("v1.0");
-    file.append("powershell.exe");
-    if (!file.exists()) {
-      throw new Error("Missing Windows PowerShell executable");
-    }
-    return file;
-  },
-
-  escapeForPowerShell(value) {
-    return String(value || "").replace(/'/g, "''");
-  },
-
-  getPickerParentWindow() {
-    try {
-      if (window && window.browsingContext && window.browsingContext.topChromeWindow) {
-        return window.browsingContext.topChromeWindow;
-      }
-    } catch (error) {}
-    try {
-      if (
-        window &&
-        window.docShell &&
-        window.docShell.chromeEventHandler &&
-        window.docShell.chromeEventHandler.ownerGlobal
-      ) {
-        return window.docShell.chromeEventHandler.ownerGlobal;
-      }
-    } catch (error) {}
-    try {
-      if (window && window.top) {
-        return window.top;
-      }
-    } catch (error) {}
-    try {
-      if (typeof Zotero !== "undefined" && Zotero && Zotero.getMainWindow) {
-        let mainWindow = Zotero.getMainWindow();
-        if (mainWindow) {
-          return mainWindow;
-        }
-      }
-    } catch (error) {}
-    return window;
-  },
-
-  pickFilePath(title, filters) {
-    try {
-      let picker = Components.classes["@mozilla.org/filepicker;1"]
-        .createInstance(Components.interfaces.nsIFilePicker);
-      picker.init(this.getPickerParentWindow(), title, Components.interfaces.nsIFilePicker.modeOpen);
-      if (Array.isArray(filters)) {
-        for (let filter of filters) {
-          picker.appendFilter(filter[0], filter[1]);
-        }
-      } else {
-        picker.appendFilters(Components.interfaces.nsIFilePicker.filterAll);
-      }
-      return new Promise((resolve) => {
-        picker.open((result) => {
-          if (result === Components.interfaces.nsIFilePicker.returnOK && picker.file) {
-            resolve(picker.file.path);
-            return;
-          }
-          resolve("");
-        });
-      });
-    } catch (error) {
-      Zotero.logError(error);
-      this.setTestMcpStatus("文件选择器打开失败。");
-    }
-    return Promise.resolve("");
-  },
-
-  pickDirectoryPath(title) {
-    try {
-      let picker = Components.classes["@mozilla.org/filepicker;1"]
-        .createInstance(Components.interfaces.nsIFilePicker);
-      picker.init(
-        this.getPickerParentWindow(),
-        title,
-        Components.interfaces.nsIFilePicker.modeGetFolder
-      );
-      return new Promise((resolve) => {
-        picker.open((result) => {
-          if (result === Components.interfaces.nsIFilePicker.returnOK && picker.file) {
-            resolve(picker.file.path);
-            return;
-          }
-          resolve("");
-        });
-      });
-    } catch (error) {
-      Zotero.logError(error);
-      this.setTestMcpStatus("目录选择器打开失败。");
-    }
-    return Promise.resolve("");
-  },
-
-  getZoteroDataDirectoryPath() {
-    try {
-      if (typeof Zotero !== "undefined" && Zotero && Zotero.DataDirectory) {
-        if (typeof Zotero.DataDirectory.dir === "string" && Zotero.DataDirectory.dir) {
-          return Zotero.DataDirectory.dir;
-        }
-        if (Zotero.DataDirectory.dir && Zotero.DataDirectory.dir.path) {
-          return Zotero.DataDirectory.dir.path;
-        }
-        if (typeof Zotero.DataDirectory.getDir === "function") {
-          let directory = Zotero.DataDirectory.getDir();
-          if (directory && directory.path) {
-            return directory.path;
-          }
-        }
-      }
-    } catch (error) {}
-    return this.getFileLocatorPath("ProfD");
-  },
-
-  defaultBufferDirectory() {
-    try {
-      let dataPath = this.getZoteroDataDirectoryPath();
-      if (!dataPath) {
-        return "";
-      }
-      let directory = Zotero.File.pathToFile(dataPath);
-      directory.append("buffer");
-      return directory.path;
+      let value = Zotero.Prefs.get(this.PREF_BRANCH + name, true);
+      return value ? String(value) : "";
     } catch (error) {
       return "";
     }
   },
 
-  getFileLocatorPath(name) {
-    try {
-      return Services.dirsvc.get(name, Components.interfaces.nsIFile).path;
-    } catch (error) {
-      return "";
-    }
+  setBoolPref(name, value) {
+    Zotero.Prefs.set(this.PREF_BRANCH + name, !!value, true);
+  },
+
+  setStringPref(name, value) {
+    Zotero.Prefs.set(this.PREF_BRANCH + name, String(value || ""), true);
+  },
+
+  setConfigActionStatus(message, level) {
+    this.renderActionFeedback("config", message, level || "idle");
+  },
+
+  setPortActionStatus(message, level) {
+    this.renderActionFeedback("port", message, level || "idle");
+  },
+
+  setTokenActionStatus(message, level) {
+    this.renderActionFeedback("token", message, level || "idle");
+  },
+
+  normalizePort(value) {
+    return ZeroMcpPluginCommon.normalizePort(value, 8000);
   },
 
   getConfiguredMcpExecutablePath() {
     return this.getStringPref("mcpExecutablePath").trim();
   },
 
-  getMcpExecutablePath() {
-    return this.getConfiguredMcpExecutablePath();
+  getLocalMcpPort() {
+    return this.normalizePort(this.getStringPref("localMcpPort") || "8000");
+  },
+
+  getLocalMcpBaseURL() {
+    return "http://127.0.0.1:" + this.getLocalMcpPort();
+  },
+
+  getLocalMcpURL() {
+    return this.getLocalMcpBaseURL() + "/mcp";
   },
 
   getBufferDirectory() {
-    return this.getStringPref("bufferDirectory") || this.defaultBufferDirectory();
+    let configured = this.getStringPref("bufferDirectory").trim();
+    return configured || this.defaultBufferDirectory();
   },
 
-  isAllowedLinkMode(value) {
-    return value === "imported_file" || value === "linked_file";
+  defaultBufferDirectory() {
+    return ZeroMcpPluginCommon.defaultBufferDirectory();
   },
 
-  isAllowedDuplicatePolicy(value) {
-    return (
-      value === "add_existing_to_collection" ||
-      value === "skip" ||
-      value === "attach_to_existing" ||
-      value === "error"
-    );
+  generateToken() {
+    return ZeroMcpPluginCommon.generateSharedSecret();
   },
 
   getLinkMode() {
@@ -809,44 +799,11 @@ var ZeroMcpPluginPreferences = {
     return this.isAllowedDuplicatePolicy(value) ? value : this.DEFAULT_DUPLICATE_POLICY;
   },
 
-  generateToken() {
-    if (typeof crypto !== "undefined" && crypto && crypto.getRandomValues) {
-      let bytes = new Uint8Array(24);
-      crypto.getRandomValues(bytes);
-      return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-    }
-    let uuid = Services.uuid.generateUUID().toString().replace(/[{}-]/g, "");
-    return (uuid + uuid).slice(0, 48);
+  isAllowedLinkMode(value) {
+    return ["imported_file", "linked_file"].indexOf(value) !== -1;
   },
 
+  isAllowedDuplicatePolicy(value) {
+    return ["add_existing_to_collection", "skip", "attach_to_existing", "error"].indexOf(value) !== -1;
+  },
 };
-
-(function bootstrapZeroMcpPluginPreferences() {
-  let attempts = 0;
-  let maxAttempts = 50;
-
-  function tryInit() {
-    attempts += 1;
-    let root = document.getElementById("zero-mcp-plugin-preferences-root");
-    if (root && typeof ZeroMcpPluginPreferences !== "undefined") {
-      try {
-        ZeroMcpPluginPreferences.init();
-        return;
-      } catch (error) {
-        if (typeof Zotero !== "undefined" && Zotero && Zotero.logError) {
-          Zotero.logError(error);
-        }
-      }
-    }
-    if (attempts < maxAttempts) {
-      window.setTimeout(tryInit, 100);
-    }
-  }
-
-  if (document.readyState === "complete" || document.readyState === "interactive") {
-    window.setTimeout(tryInit, 0);
-  } else {
-    window.addEventListener("DOMContentLoaded", tryInit, { once: true });
-    window.addEventListener("load", tryInit, { once: true });
-  }
-})();

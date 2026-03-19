@@ -62,3 +62,5 @@ CLAUDE.md
 # Local plugin artifacts
 zotero-test-imports/
 zotero-test-buffer/
+test_buffer/
+tmp/

@@ -4,10 +4,13 @@ function install() {}
 
 async function startup({ id, version, rootURI }) {
 	try {
-		Zotero.PreferencePanes.register({
-			pluginID: 'zero-mcp-plugin@example.com',
+		Services.scriptloader.loadSubScript(rootURI + 'plugin-compat.js');
+		await Zotero.PreferencePanes.register({
+			pluginID: id,
+			id: 'zero-mcp-plugin-preferences',
+			label: 'Zotero Copilot',
 			src: 'preferences.xhtml',
-			scripts: ['preferences.js']
+			scripts: ['plugin-compat.js', 'preferences.js']
 		});
 	}
 	catch (error) {
@@ -15,7 +18,7 @@ async function startup({ id, version, rootURI }) {
 		throw error;
 	}
 
-	Services.scriptloader.loadSubScript(rootURI + 'zero-mcp-plugin.js');
+	Services.scriptloader.loadSubScript(rootURI + 'plugin-main.js');
 	ZeroMcpPlugin.init({ id, version, rootURI });
 	await ZeroMcpPlugin.startup();
 }
@@ -32,10 +35,14 @@ function onMainWindowUnload({ window }) {
 	}
 }
 
-function shutdown() {
+async function shutdown() {
 	if (ZeroMcpPlugin) {
-		ZeroMcpPlugin.shutdown();
-		ZeroMcpPlugin = undefined;
+		try {
+			await ZeroMcpPlugin.shutdown();
+		}
+		finally {
+			ZeroMcpPlugin = undefined;
+		}
 	}
 }
 

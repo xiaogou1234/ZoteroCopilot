@@ -99,7 +99,7 @@ def test_batch_update_tags_accepts_plain_string(monkeypatch):
 
     class FakeBridge:
         def batch_update_tags(self, **payload):
-            assert payload["addTags"] == ["codex-smoke"]
+            assert payload["addTags"] == ["test-tag"]
             assert payload["removeTags"] == []
             return {"updated": 1, "skipped": 0, "failed": 0}
 
@@ -107,7 +107,7 @@ def test_batch_update_tags_accepts_plain_string(monkeypatch):
 
     result = server.batch_update_tags(
         query="agents",
-        add_tags="codex-smoke",
+        add_tags="test-tag",
         remove_tags=None,
         limit=10,
         ctx=DummyContext(),

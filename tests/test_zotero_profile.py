@@ -2,6 +2,7 @@ import json
 
 from zotero_mcp.local_db import LocalZoteroReader
 from zotero_mcp.zotero_profile import (
+    _candidate_config_roots,
     discover_active_bridge_secret,
     discover_active_local_mcp_port,
     discover_active_zotero_db_path,
@@ -96,3 +97,36 @@ def test_local_reader_uses_active_profile_database_path(monkeypatch, tmp_path):
     reader = LocalZoteroReader()
 
     assert reader.db_path == str(db_path)
+
+
+def test_mac_profile_discovery_uses_real_application_support_root(monkeypatch, tmp_path):
+    home_dir = tmp_path / "home"
+    config_root = home_dir / "Library" / "Application Support" / "Zotero"
+    profile_path = config_root / "Profiles" / "mac"
+    data_dir = tmp_path / "mac_data"
+    data_dir.mkdir(parents=True)
+    db_path = data_dir / "zotero.sqlite"
+    db_path.write_text("", encoding="utf-8")
+
+    _write_profiles_ini(
+        config_root,
+        [
+            {"name": "mac", "path": "Profiles/mac", "default": True},
+        ],
+    )
+    _write_prefs(profile_path, data_dir=data_dir, secret="mac-secret", local_mcp_port=8345)
+    (profile_path / ".parentlock").write_text("", encoding="utf-8")
+
+    monkeypatch.delenv("ZOTERO_CONFIG_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setattr("zotero_mcp.zotero_profile.platform.system", lambda: "Darwin")
+
+    roots = _candidate_config_roots()
+    profile = get_active_profile_info()
+
+    assert roots[0] == config_root
+    assert profile is not None
+    assert profile.profile_path == profile_path
+    assert discover_active_bridge_secret() == "mac-secret"
+    assert discover_active_local_mcp_port() == 8345
+    assert discover_active_zotero_db_path() == str(db_path)

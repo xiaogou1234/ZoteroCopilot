@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero Copilot",
+  "version": "0.3.0",
+  "description": "Adds a localhost-only Zotero bridge for Zotero Copilot desktop workflows.",
+  "homepage_url": "https://github.com/xiaogou1234/ZoteroCopilot",
+  "applications": {
+    "zotero": {
+      "id": "zero-mcp-plugin@example.com",
+      "update_url": "https://example.com/zero-mcp-plugin/updates.json",
+      "strict_min_version": "7.0",
+      "strict_max_version": "7.0.*"
+    }
+  }
+}

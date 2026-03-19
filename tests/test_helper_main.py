@@ -52,16 +52,19 @@ def test_helper_main_uses_profile_port_when_not_explicit(monkeypatch):
     dummy = DummyMCP()
 
     monkeypatch.delenv("ZOTERO_DESKTOP_MCP_PORT", raising=False)
+    monkeypatch.delenv("ZOTERO_DESKTOP_BRIDGE_TOKEN", raising=False)
     monkeypatch.setattr(helper_main, "mcp", dummy)
     monkeypatch.setattr(helper_main, "configure_helper_bridge_proxy", lambda *_args, **_kwargs: None)
 
     def fake_setup():
         os.environ["ZOTERO_DESKTOP_MCP_PORT"] = "9234"
+        os.environ["ZOTERO_DESKTOP_BRIDGE_TOKEN"] = "profile-secret"
 
     monkeypatch.setattr(helper_main, "setup_zotero_environment", fake_setup)
 
     helper_main.main([])
 
+    assert os.environ["ZOTERO_DESKTOP_BRIDGE_TOKEN"] == "profile-secret"
     assert dummy.calls == [
         {
             "transport": "streamable-http",

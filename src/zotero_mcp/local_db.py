@@ -1,8 +1,8 @@
 """
-Local Zotero database reader for semantic search.
+Local Zotero database reader for Zotero MCP.
 
-Provides direct SQLite access to Zotero's local database for faster semantic search
-when running in local mode.
+Provides direct SQLite access to the local Zotero database for read tools and
+keyword search when running in local mode.
 """
 
 import platform
@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 from dataclasses import dataclass
 
-from .utils import is_local_mode
+from .utils import is_local_mode, matches_search_query, tokenize_search_query
 from .zotero_profile import discover_active_zotero_db_path
 
 
 @dataclass
 class ZoteroItem:
-    """Represents a Zotero item with text content for semantic search."""
+    """Represents a Zotero item with searchable local text content."""
     item_id: int
     key: str
     item_type_id: int
@@ -36,12 +36,7 @@ class ZoteroItem:
     date_modified: str | None = None
 
     def get_searchable_text(self) -> str:
-        """
-        Combine all text fields into a single searchable string.
-
-        Returns:
-            Combined text content for semantic search indexing.
-        """
+        """Combine text fields into a single searchable string."""
         parts = []
 
         if self.title:
@@ -71,8 +66,8 @@ class LocalZoteroReader:
     """
     Direct SQLite reader for Zotero's local database.
 
-    Provides fast access to item metadata and fulltext for semantic search
-    without going through the Zotero API.
+    Provides fast access to item metadata and full text without going through
+    the Zotero HTTP API.
     """
 
     def __init__(self, db_path: str | None = None, pdf_max_pages: int | None = None):
@@ -198,16 +193,7 @@ class LocalZoteroReader:
             return ""
 
     def _extract_text_from_html(self, file_path: Path) -> str:
-        """Extract text from HTML using markitdown if available; fallback to stripping tags."""
-        # Try markitdown first
-        try:
-            from markitdown import MarkItDown
-            md = MarkItDown()
-            result = md.convert(str(file_path))
-            return result.text_content or ""
-        except Exception:
-            pass
-        # Fallback using a simple parser
+        """Extract text from HTML using a lightweight local parser."""
         try:
             from bs4 import BeautifulSoup  # type: ignore
             html = file_path.read_text(errors="ignore")
@@ -763,7 +749,7 @@ class LocalZoteroReader:
 
     def get_items_with_text(self, limit: int | None = None, include_fulltext: bool = False) -> list[ZoteroItem]:
         """
-        Get all items with their text content for semantic search.
+        Get all items with their locally searchable text content.
 
         Args:
             limit: Optional limit on number of items to return.
@@ -1135,6 +1121,53 @@ class LocalZoteroReader:
             return None
         return self._extract_fulltext_for_item(item_id)
 
+    def search_item_keys_by_fulltext(
+        self,
+        query: str,
+        *,
+        library_id: str | int | None = None,
+        library_type: str = "user",
+        limit: int | None = 50,
+    ) -> list[str]:
+        """Return top-level item keys matched by Zotero's local fulltext index."""
+        terms = tokenize_search_query(query)
+        if not terms:
+            return []
+
+        resolved_library_id = self._resolve_library_id(library_id, library_type)
+        conn = self._get_connection()
+        placeholders = ",".join(["?"] * len(terms))
+        params: list[Any] = [resolved_library_id, *terms, len(set(terms))]
+        limit_clause = ""
+        if isinstance(limit, int) and limit > 0:
+            limit_clause = " LIMIT ?"
+            params.append(limit)
+
+        rows = conn.execute(
+            f"""
+            SELECT
+                COALESCE(parent.key, i.key) AS itemKey,
+                COUNT(DISTINCT fw.word) AS matchedTerms,
+                MAX(COALESCE(parent.itemID, i.itemID)) AS sortItemID
+            FROM fulltextWords fw
+            JOIN fulltextItemWords fiw ON fiw.wordID = fw.wordID
+            JOIN fulltextItems fti ON fti.itemID = fiw.itemID
+            JOIN items i ON i.itemID = fti.itemID
+            LEFT JOIN itemAttachments ia ON ia.itemID = i.itemID
+            LEFT JOIN items parent ON parent.itemID = ia.parentItemID
+            LEFT JOIN deletedItems di ON di.itemID = COALESCE(parent.itemID, i.itemID)
+            WHERE COALESCE(parent.libraryID, i.libraryID) = ?
+              AND di.itemID IS NULL
+              AND fw.word IN ({placeholders})
+            GROUP BY COALESCE(parent.key, i.key)
+            HAVING COUNT(DISTINCT fw.word) = ?
+            ORDER BY matchedTerms DESC, sortItemID DESC
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+        return [str(row["itemKey"]) for row in rows if row["itemKey"]]
+
     def get_item_by_key(self, key: str) -> ZoteroItem | None:
         """
         Get a specific item by its Zotero key.
@@ -1163,16 +1196,30 @@ class LocalZoteroReader:
             List of matching ZoteroItem objects.
         """
         items = self.get_items_with_text()
+        items_by_key = {item.key: item for item in items}
         matching_items = []
-
-        query_lower = query.lower()
+        seen_keys: set[str] = set()
 
         for item in items:
-            searchable_text = item.get_searchable_text().lower()
-            if query_lower in searchable_text:
+            if matches_search_query([item.get_searchable_text()], query):
                 matching_items.append(item)
+                seen_keys.add(item.key)
                 if len(matching_items) >= limit:
                     break
+
+        if len(matching_items) >= limit:
+            return matching_items
+
+        for item_key in self.search_item_keys_by_fulltext(query, limit=limit * 3):
+            if item_key in seen_keys:
+                continue
+            item = items_by_key.get(item_key)
+            if item is None:
+                continue
+            matching_items.append(item)
+            seen_keys.add(item_key)
+            if len(matching_items) >= limit:
+                break
 
         return matching_items
 

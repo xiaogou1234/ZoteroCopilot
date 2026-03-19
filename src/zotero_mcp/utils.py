@@ -1,8 +1,11 @@
-from typing import List, Dict
+from typing import Iterable, List, Dict
 import os
 import re
 
 html_re = re.compile(r"<.*?>")
+_SEARCH_SEPARATOR_RE = re.compile(r"[\-_./:]+")
+_SEARCH_NON_WORD_RE = re.compile(r"[^\w\s]+", flags=re.UNICODE)
+_SEARCH_WHITESPACE_RE = re.compile(r"\s+")
 
 def format_creators(creators: list[dict[str, str]]) -> str:
     """
@@ -43,3 +46,35 @@ def clean_html(raw_html: str) -> str:
     """
     clean_text = re.sub(html_re, "", raw_html)
     return clean_text
+
+
+def normalize_search_text(value: str | None) -> str:
+    """Normalize text for lightweight keyword matching."""
+    if not value:
+        return ""
+
+    normalized = value.casefold()
+    normalized = _SEARCH_SEPARATOR_RE.sub(" ", normalized)
+    normalized = _SEARCH_NON_WORD_RE.sub(" ", normalized)
+    normalized = _SEARCH_WHITESPACE_RE.sub(" ", normalized).strip()
+    return normalized
+
+
+def tokenize_search_query(query: str) -> list[str]:
+    """Split a user query into normalized search terms."""
+    normalized = normalize_search_text(query)
+    if not normalized:
+        return []
+    return [term for term in normalized.split(" ") if term]
+
+
+def matches_search_query(haystacks: Iterable[str | None], query: str) -> bool:
+    """Return True when every normalized query term appears in the haystack."""
+    terms = tokenize_search_query(query)
+    if not terms:
+        return False
+
+    haystack = normalize_search_text(" ".join(value for value in haystacks if value))
+    if not haystack:
+        return False
+    return all(term in haystack for term in terms)

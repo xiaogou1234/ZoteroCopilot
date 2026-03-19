@@ -1,117 +1,197 @@
 # ZoteroCopilot
 
-ZoteroCopilot is a local-first MCP adapter and Zotero desktop plugin bridge for working with a Zotero library from AI clients.
-
-It exposes one MCP helper endpoint for clients, reads from the local Zotero data store, and performs write operations through a localhost-only Zotero desktop bridge.
+ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for working with a local Zotero library from MCP clients.
 
 ## Status
 
-- Repository version: `0.1.1`
-- Python package / helper version: `0.1.1`
-- Zotero plugin version: `0.1.1`
-- Supported product path: local-first only
+- Repository version: `0.3.0`
+- Python package / helper version: `0.3.0`
+- Zotero plugin version: `0.3.0`
+- Zotero plugin artifacts:
+  - `dist/plugins/zotero_copilot_0.3.0_zotero7_plugin.xpi`
+  - `dist/plugins/zotero_copilot_0.3.0_zotero8_plugin.xpi`
+- Public helper artifacts:
+  - `dist/releases/zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
+  - `dist/releases/zotero_copilot_0.3.0_helper_windows_x64.zip`
 
 ## What It Does
 
-- Search the local Zotero library by keyword, tag, collection, and recent items
-- Retrieve metadata, notes, child items, and full text when available
-- Run semantic search against a local vector index
-- Create and delete collections
-- Create collection notes and child notes
-- Import PDFs, identifiers, and BibTeX metadata into Zotero
-- Move items between Zotero collections without changing metadata or attachment storage
-- Remove items from collections or send items to the Zotero trash with safety checks
+- Search the local Zotero library by keyword, tag, collection, notes, and recent items
+- Read item metadata, child items, notes, tags, and available full text
+- Expose ChatGPT connectors compatible `search` and `fetch` tools
+- Execute local write operations through the Zotero desktop plugin bridge:
+  - collection creation and deletion
+  - note creation
+  - PDF / identifier / BibTeX import
+  - batch PDF import
+  - collection moves
+  - safe item deletion
+  - batch tag updates
 
-## Architecture
+Semantic search and vector-database tooling were removed in `0.3.0`. The `search` wrapper now performs keyword search over the local library.
 
-ZoteroCopilot uses a three-part local architecture:
+## Downloads
 
-1. The MCP helper serves clients on `http://127.0.0.1:8000/mcp`
-2. The Zotero desktop plugin exposes a localhost-only write bridge on `http://127.0.0.1:8000/zero-mcp`
-3. Local reads come from the Zotero database and local desktop environment
+Prebuilt plugin and helper packages should be published on the [GitHub Releases page](https://github.com/xiaogou1234/ZoteroCopilot/releases).
 
-For a concise architecture overview, see [docs/architecture.md](/F:/codex/zotero-mcp/docs/architecture.md).
+- [Open the download page](https://github.com/xiaogou1234/ZoteroCopilot/releases)
+- [End-user install guide](docs/getting-started.md)
+
+If the current version has not been published as a release yet, follow the source-install path below.
 
 ## Installation
 
-### Python package
+### End-User Install
+
+1. Open the [GitHub Releases page](https://github.com/xiaogou1234/ZoteroCopilot/releases).
+2. Download the XPI that matches your Zotero major version:
+   - `zotero_copilot_0.3.0_zotero7_plugin.xpi`
+   - `zotero_copilot_0.3.0_zotero8_plugin.xpi`
+3. Download the helper archive for your platform:
+   - macOS: `zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
+   - Windows: `zotero_copilot_0.3.0_helper_windows_x64.zip`
+4. Install the XPI in Zotero.
+5. Extract the helper archive and keep the full extracted directory intact.
+6. In Zotero Copilot preferences, choose the helper executable inside the extracted directory.
+7. Configure the buffer directory and whether Zotero writes are allowed.
+8. Test the connection in the plugin preferences.
+9. Copy the generated MCP configuration for Codex or Claude Code.
+
+Detailed end-user steps are in [docs/getting-started.md](docs/getting-started.md).
+
+### Install From Source
+
+1. Install the Python package:
 
 ```bash
 pip install zotero-mcp-server
 ```
 
-or with `uv`:
+or:
 
 ```bash
 uv tool install zotero-mcp-server
 ```
 
-### Optional semantic search dependencies
+2. Build the Zotero plugin:
 
 ```bash
-pip install "zotero-mcp-server[semantic]"
+python3 packaging/plugin/build_xpi.py
 ```
 
-### Zotero desktop plugin
+3. Build the helper package for your platform:
 
-Build the plugin locally from the `zero-mcp-plugin/` source tree and install the generated `.xpi` in Zotero.
+- macOS: [packaging/macos/README.md](packaging/macos/README.md)
+- Windows: [packaging/windows/README.md](packaging/windows/README.md)
 
-The plugin version is currently `0.1.1`. If you already installed a newer internal build such as `2.x`, manually reinstall or uninstall the old plugin first so Zotero does not treat `0.1.1` as a downgrade.
+4. Install the XPI that matches your Zotero major version.
+5. Extract the helper archive and keep the whole extracted directory intact.
+6. In Zotero Copilot preferences, choose the helper executable inside the extracted directory.
+7. Copy the generated MCP configuration for Codex or Claude Code.
 
-## Quick Start
+## MCP Interfaces
 
-1. Install the Python package.
-2. Build the helper executable if you want the standalone desktop-helper workflow on Windows.
-3. Build and install the Zotero plugin.
-4. Open the plugin preferences in Zotero and choose the local MCP driver path.
-5. Copy the MCP client configuration for Codex or Claude Code from the plugin UI.
-6. Start or test the local MCP service from the plugin UI.
+The MCP server currently exposes 34 tools, grouped below by purpose.
 
-Detailed setup steps are available in [docs/getting-started.md](/F:/codex/zotero-mcp/docs/getting-started.md).
+### Read and Search Tools
 
-## Semantic Search
+| Tool | Brief |
+| --- | --- |
+| `zotero_search_items` | Keyword search across local Zotero items, with query-mode, tag, and item-type filtering. |
+| `zotero_search_by_tag` | Tag-first search with AND, OR, and exclusion support. |
+| `zotero_get_item_metadata` | Return detailed item metadata by Zotero item key. |
+| `zotero_get_item_fulltext` | Return extracted attachment full text, with metadata fallback when needed. |
+| `zotero_get_collections` | List the collection tree in the active library. |
+| `zotero_get_collection_items` | List items inside a specific collection. |
+| `zotero_get_item_children` | List child attachments and notes for a parent item. |
+| `zotero_get_tags` | List tags used in the active library. |
+| `zotero_get_recent` | Show recently added items. |
+| `zotero_advanced_search` | Run multi-condition client-side advanced search with optional sorting. |
+| `zotero_get_notes` | Read notes, optionally scoped to a parent item. |
+| `zotero_search_notes` | Search note content across the active library. |
 
-Semantic search uses a local Chroma database. The helper now checks index state before each semantic search and automatically refreshes or rebuilds the index when needed.
+### Library, Feed, and Bridge Context Tools
 
-Common helper commands:
+| Tool | Brief |
+| --- | --- |
+| `zotero_get_desktop_plugin_capabilities` | Report whether the local desktop bridge is available and what mutation features it supports. |
+| `zotero_resolve_collection_path` | Convert a human-readable collection path into a stable collection key. |
+| `zotero_list_libraries` | List accessible user, group, and feed libraries. |
+| `zotero_switch_library` | Switch the active library context for subsequent tool calls. |
+| `zotero_list_feeds` | List RSS feed subscriptions from the local Zotero installation. |
+| `zotero_get_feed_items` | Read items from a specific RSS feed library. |
+
+### Write and Import Tools
+
+| Tool | Brief |
+| --- | --- |
+| `zotero_create_collection` | Create a collection by name or full path through the desktop bridge. |
+| `zotero_delete_collection` | Delete a collection container without deleting the underlying library items. |
+| `zotero_batch_create_collections` | Create multiple collections in one request. |
+| `zotero_batch_delete_collections` | Delete multiple collections in one request. |
+| `zotero_import_pdf_to_collection` | Import one local PDF into a target collection. |
+| `zotero_import_identifier_to_collection` | Import metadata from DOI, ISBN, PMID, or arXiv identifiers. |
+| `zotero_import_bibtex_to_collection` | Import metadata from BibTeX or BibLaTeX text. |
+| `zotero_create_collection_note` | Create a standalone note inside a collection. |
+| `zotero_create_child_note` | Create a child note under an existing item. |
+| `zotero_batch_import_pdfs_to_collection` | Bulk import PDFs from a file list or directory. |
+| `zotero_move_items_between_collections` | Move one or more items from one collection to another. |
+| `zotero_remove_item_from_collection` | Remove an item from one collection without deleting the item itself. |
+| `zotero_delete_item` | Move an item to the Zotero trash through the bridge. |
+| `zotero_batch_update_tags` | Add or remove tags across multiple matched items in one operation. |
+
+### Connector Compatibility Tools
+
+| Tool | Brief |
+| --- | --- |
+| `search` | ChatGPT connector-compatible keyword search wrapper returning JSON results. |
+| `fetch` | ChatGPT connector-compatible fetch wrapper returning metadata and text for one item. |
+
+## Architecture
+
+ZoteroCopilot uses a three-part local architecture:
+
+1. The helper serves MCP clients on `http://127.0.0.1:8000/mcp`
+2. The Zotero plugin exposes localhost-only bridge endpoints and the helper proxies them at `http://127.0.0.1:8000/zero-mcp`
+3. Read operations come from the local Zotero database and active Zotero desktop profile
+
+See [docs/architecture.md](docs/architecture.md) for the concise architecture overview.
+
+## Public Distribution Notes
+
+- The helper is still built as `onedir` internally.
+- Public releases are archives, not bare folders.
+- End users must extract the full helper directory before selecting the executable in Zotero.
+- On macOS, if the helper is blocked after extraction, remove quarantine on the extracted directory:
 
 ```bash
-zotero-mcp update-db
-zotero-mcp update-db --fulltext
-zotero-mcp db-status
+xattr -dr com.apple.quarantine /path/to/extracted/zotero_copilot_0.3.0_helper_macos_arm64
 ```
 
 ## Development
 
-### Repository layout
+Repository layout:
 
-- `src/zotero_mcp/`: Python MCP server, helper, semantic search, and bridge client
+- `src/zotero_mcp/`: Python MCP server, helper, and desktop bridge client
 - `zero-mcp-plugin/`: Zotero desktop plugin source
-- `docs/`: user and architecture documentation
-- `packaging/`: helper build assets and scripts
+- `docs/`: setup and architecture docs
+- `packaging/`: helper and plugin build scripts
 - `tests/`: Python test suite
 
-### Validation
-
-Recommended checks before release:
+Recommended validation:
 
 ```bash
-python -m pytest
-python -m compileall src/zotero_mcp
+python3 -m pytest
+python3 -m compileall src/zotero_mcp
+python3 packaging/plugin/build_xpi.py
 ```
-
-For Windows helper packaging details, see [packaging/windows/README.md](/F:/codex/zotero-mcp/packaging/windows/README.md).
 
 ## Documentation
 
-- [README.zh-CN.md](/F:/codex/zotero-mcp/README.zh-CN.md)
-- [docs/getting-started.md](/F:/codex/zotero-mcp/docs/getting-started.md)
-- [docs/getting-started.zh-CN.md](/F:/codex/zotero-mcp/docs/getting-started.zh-CN.md)
-- [docs/architecture.md](/F:/codex/zotero-mcp/docs/architecture.md)
-- [docs/architecture.zh-CN.md](/F:/codex/zotero-mcp/docs/architecture.zh-CN.md)
-- [zero-mcp-plugin/README.md](/F:/codex/zotero-mcp/zero-mcp-plugin/README.md)
-- [zero-mcp-plugin/README.zh-CN.md](/F:/codex/zotero-mcp/zero-mcp-plugin/README.zh-CN.md)
-
-## Acknowledgements
-
-ZoteroCopilot gratefully acknowledges the open-source work in [54yyyu/zotero-mcp](https://github.com/54yyyu/zotero-mcp), which helped inform this project.
+- [README.zh-CN.md](README.zh-CN.md)
+- [docs/getting-started.md](docs/getting-started.md)
+- [docs/getting-started.zh-CN.md](docs/getting-started.zh-CN.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)
+- [zero-mcp-plugin/README.md](zero-mcp-plugin/README.md)
+- [zero-mcp-plugin/README.zh-CN.md](zero-mcp-plugin/README.zh-CN.md)

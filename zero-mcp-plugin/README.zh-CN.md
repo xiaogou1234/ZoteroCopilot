@@ -1,35 +1,43 @@
-# ZoteroCopilot 插件
+# Zotero Copilot 插件
 
-ZoteroCopilot 插件是项目在 Zotero 侧的本地写操作桥接层。
+Zotero Copilot 插件是项目在 Zotero 侧的本地 bridge 和 helper 生命周期管理层。
 
 ## 作用
 
-插件运行在 Zotero 内部，对外提供仅限本机访问的 bridge endpoint，用于执行：
+插件运行在 Zotero 内部，提供：
 
-- collection 管理
-- note 创建
-- PDF、identifier、BibTeX 导入
-- collection 之间的条目移动
-- 安全删除条目
-- tag 更新
+- 仅限 localhost 的写操作 bridge endpoint
+- 跟随 Zotero 生命周期的 helper 启动、重启、恢复和关闭
+- helper 路径、缓冲目录、端口、令牌、客户端配置片段等偏好设置界面
 
-## 在整体架构中的位置
+## 产物
 
-- helper 负责 MCP 对外适配
-- 插件负责本地写路径，是唯一可信写层
-- 客户端应始终通过 `8000` 端口访问 helper 对外的 bridge
+使用下面的命令构建插件：
+
+```bash
+python3 packaging/plugin/build_xpi.py
+```
+
+会生成：
+
+- `dist/plugins/zotero_copilot_0.3.0_zotero7_plugin.xpi`
+- `dist/plugins/zotero_copilot_0.3.0_zotero8_plugin.xpi`
 
 ## 关键源码文件
 
 - `manifest.json`
+- `manifest.z7.json`
+- `manifest.z8.json`
 - `bootstrap.js`
-- `zero-mcp-plugin.js`
+- `plugin-compat.js`
+- `plugin-main.js`
 - `preferences.xhtml`
 - `preferences.js`
 - `prefs.js`
 
 ## 说明
 
-- 当前插件版本为 `0.1.1`
-- 如果 Zotero 已装过更高的内部测试版，请手动覆盖安装，或先卸载旧版再装
-- 仓库只保留插件源码，不提交编译后的 `.xpi` 产物
+- 用户可见名称：`Zotero Copilot`
+- Windows 与 macOS 共用同一套插件源码
+- 终端用户应选择解压后 helper 目录里的可执行文件，而不是最外层目录
+- 仓库保留插件源码，不提交编译后的 `.xpi`
