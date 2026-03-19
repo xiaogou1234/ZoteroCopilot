@@ -1,48 +1,50 @@
 # Architecture
 
-ZoteroCopilot is a local-first system with one read path and one write path.
+This document is for technical readers who need the system shape and data flow. User installation lives in the [top-level README](../README.md).
 
 ## Components
 
 ### MCP helper
 
-- Serves MCP clients over `http://127.0.0.1:8000/mcp`
-- Exposes the helper-facing bridge proxy at `http://127.0.0.1:8000/zero-mcp`
-- Hosts the read-only MCP tools plus the `search` / `fetch` compatibility tools
+- Serves MCP clients on `http://127.0.0.1:8000/mcp`
+- Exposes the helper-facing bridge proxy on `http://127.0.0.1:8000/zero-mcp`
+- Hosts the read tools and the connector-compatible `search` / `fetch` wrappers
 
 ### Zotero desktop plugin
 
 - Runs inside Zotero 7 and Zotero 8
-- Shares one source tree across Windows and macOS
-- Owns helper lifecycle management for local desktop usage
+- Owns helper lifecycle management in desktop usage
 - Exposes localhost-only mutation endpoints inside Zotero
 
 ### Local read layer
 
 - Reads from the local Zotero database and active Zotero profile
-- Powers metadata, notes, collections, tags, recent items, and full-text retrieval
+- Powers metadata, notes, collections, tags, recent items, feeds, and full-text retrieval
 - Does not depend on vector databases or embedding models in `0.3.0`
 
-## Read path
+## Read Path
 
-1. MCP client calls the helper
-2. Helper reads from the local Zotero database or local profile-derived state
-3. Helper returns normalized MCP results
+1. An MCP client calls the helper.
+2. The helper reads from the local Zotero database or profile-derived state.
+3. The helper returns normalized MCP results.
 
-The ChatGPT connectors `search` tool is now a keyword-search wrapper over local items. `fetch` still resolves item metadata and text by item key or Zotero URL.
+## Write Path
 
-## Write path
+1. An MCP client calls the helper.
+2. The helper forwards the mutation request to the local bridge proxy.
+3. The Zotero plugin executes the mutation inside Zotero.
 
-1. MCP client calls the helper
-2. Helper forwards mutation requests to the local bridge proxy
-3. The Zotero plugin executes the mutation inside Zotero
+This keeps supported writes local-only and avoids relying on the Zotero Web API in normal desktop usage.
 
-This keeps the supported write path local-only and avoids relying on the Zotero Web API for normal usage.
-
-## Helper distribution model
+## Helper Distribution Model
 
 - Internal build shape: `onedir`
 - Public release shape:
   - macOS: `.tar.gz`
   - Windows: `.zip`
-- End users must keep the extracted helper directory intact because the executable depends on `_internal/`
+- The extracted helper directory must stay intact because the executable depends on `_internal/`
+
+## Related Docs
+
+- [README](../README.md)
+- [Development](development.md)

@@ -1,6 +1,6 @@
 # Windows Helper 打包说明
 
-这个目录包含 Zotero Copilot 的 Windows helper 打包入口。
+本文档面向构建 Windows helper 的维护者。终端用户安装说明请看顶层 [README.zh-CN.md](../../README.zh-CN.md)。
 
 ## 目标
 
@@ -47,4 +47,13 @@ cd C:\path\to\ZoteroCopilot
 .\dist\zotero_copilot_0.3.0_helper_windows_x64\zotero_copilot_0.3.0_helper_windows_x64.exe serve --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
-终端用户必须先完整解压 zip，再选择其中的 `.exe`。不要只分发或移动单个 `.exe` 文件。
+## 平台注意事项
+
+- 请在 64 位 Windows 上构建，并以 zip 归档形式发布，不要单独分发 `.exe`。
+- 顶层 helper 目录名需要保持稳定，这样发布物名称才能和文档一致。
+- 无论是 `onedir` 目录还是公开 zip，`_internal\\` 都必须和可执行文件保持同级。
+
+## 相关文档
+
+- [开发与源码安装](../../docs/development.zh-CN.md)
+- [插件维护说明](../../zero-mcp-plugin/README.zh-CN.md)

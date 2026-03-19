@@ -1,6 +1,6 @@
 # macOS Helper Build
 
-This directory contains the macOS packaging entry point for the Zotero Copilot helper.
+This document is for maintainers building the macOS helper. End-user installation lives in the [top-level README](../../README.md).
 
 ## Goal
 
@@ -9,7 +9,7 @@ Build:
 - internal onedir output: `dist/zotero_copilot_0.3.0_helper_macos_arm64/`
 - public release archive: `dist/releases/zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
 
-## Recommended environment
+## Recommended Environment
 
 ```bash
 cd /path/to/ZoteroCopilot
@@ -19,7 +19,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[build]"
 ```
 
-## Build command
+## Build Command
 
 ```bash
 cd /path/to/ZoteroCopilot
@@ -28,7 +28,7 @@ bash packaging/macos/build-helper.sh --clean --target-arch arm64
 
 Supported target architectures are `arm64`, `x86_64`, and `universal2`. The script defaults to the current host architecture.
 
-## Output layout
+## Output Layout
 
 The onedir output contains:
 
@@ -47,10 +47,13 @@ The public tarball contains the full top-level helper directory plus:
 ./dist/zotero_copilot_0.3.0_helper_macos_arm64/zotero_copilot_0.3.0_helper_macos_arm64 serve --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
-## Public distribution note
+## Platform Notes
 
-End users must extract the tarball and keep the whole helper directory intact. If macOS blocks execution after extraction:
+- Ship the archive, not a copied standalone executable.
+- Keep the top-level helper directory name stable so release assets match the documented names.
+- `_internal/` must stay next to the executable in both the onedir output and the public archive.
 
-```bash
-xattr -dr com.apple.quarantine /path/to/extracted/zotero_copilot_0.3.0_helper_macos_arm64
-```
+## Related Docs
+
+- [Development](../../docs/development.md)
+- [Plugin maintainer notes](../../zero-mcp-plugin/README.md)

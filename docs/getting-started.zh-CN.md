@@ -1,90 +1,82 @@
-# 快速开始
+# 安装后配置与排错
 
-本文档说明 ZoteroCopilot `0.3.0` 的本地优先部署方式。
+本文档默认你已经通过发布页安装好 ZoteroCopilot。如果你还需要从源码构建，请看 [development.zh-CN.md](development.zh-CN.md)。
 
-## 1. 安装 Python 包
+## 首次配置
 
-```bash
-pip install zotero-mcp-server
-```
+打开 Zotero Copilot 偏好设置，重点确认这几项：
 
-或者：
+- **helper 可执行文件路径**
+  请选择解压后目录里的可执行文件，而不是最外层目录。
+- **文件缓冲目录**
+  导入 PDF 时会先把文件暂存到这里。
+- **是否允许写入 Zotero**
+  只有当 MCP 客户端需要创建、移动、导入或删除条目时才需要开启。
+- **端口和令牌**
+  没有特殊需求时保持默认即可。
 
-```bash
-uv tool install zotero-mcp-server
-```
+插件会自动管理 helper 生命周期：
 
-## 2. 构建 Zotero 插件
-
-```bash
-python3 packaging/plugin/build_xpi.py
-```
-
-会生成：
-
-- `dist/plugins/zotero_copilot_0.3.0_zotero7_plugin.xpi`
-- `dist/plugins/zotero_copilot_0.3.0_zotero8_plugin.xpi`
-
-安装与你当前 Zotero 主版本匹配的 XPI。
-
-## 3. 构建 helper 发布包
-
-- macOS：见 [../packaging/macos/README.zh-CN.md](../packaging/macos/README.zh-CN.md)
-- Windows：见 [../packaging/windows/README.zh-CN.md](../packaging/windows/README.zh-CN.md)
-
-公开分发产物为：
-
-- `dist/releases/zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
-- `dist/releases/zotero_copilot_0.3.0_helper_windows_x64.zip`
-
-## 4. 解压 helper 归档
-
-先完整解压归档，并保持整个 helper 目录完整。
-
-- macOS 可执行文件：
-  - `zotero_copilot_0.3.0_helper_macos_arm64/zotero_copilot_0.3.0_helper_macos_arm64`
-- Windows 可执行文件：
-  - `zotero_copilot_0.3.0_helper_windows_x64/zotero_copilot_0.3.0_helper_windows_x64.exe`
-
-不要只移动单个可执行文件。`_internal/` 必须保留在同级目录。
-
-## 5. 配置插件
-
-打开 Zotero，然后进入 Zotero Copilot 偏好设置，至少配置：
-
-- helper 可执行文件路径
-- 文件缓冲目录
-- 是否允许写入操作
-- 如有需要，再修改本地 MCP 端口和令牌
-
-现在 helper 生命周期已经简化为自动模式：
-
-- 启动 Zotero：自动确保 helper 可用
+- 启动 Zotero：自动启动或恢复 helper
 - 修改端口或令牌：自动重启 helper
 - 关闭 Zotero：自动停止插件管理的 helper
 
-## 6. 连接 MCP 客户端
+## 连接 MCP 客户端
 
-helper 对外的 MCP 地址：
+默认 MCP 地址：
 
 ```text
 http://127.0.0.1:8000/mcp
 ```
 
-helper 对外的桌面 bridge 地址：
+helper 对外的 bridge 代理地址：
 
 ```text
 http://127.0.0.1:8000/zero-mcp
 ```
 
-优先使用插件界面生成的配置片段。
+优先使用插件界面生成的配置片段。如果之后改了端口或令牌，需要重新复制一次最新配置。
 
-## 7. macOS quarantine 说明
+## 常见问题
 
-如果 macOS 在解压后阻止 helper 启动：
+### helper 无法启动
+
+先检查：
+
+- 选中的路径是不是可执行文件本身
+- helper 解压目录是否仍然完整
+- `_internal/` 是否还和可执行文件在同级目录
+
+### 测试连接失败
+
+先检查：
+
+- Zotero 是否仍在运行
+- helper 路径是否正确
+- 当前端口是否被其他程序占用
+- MCP 客户端是否使用了最新复制的配置
+
+### PDF 导入一开始就失败
+
+先检查：
+
+- 文件缓冲目录是否存在且可写
+- 导入的文件是否是真实 PDF
+- 如果客户端在执行导入写操作，写入开关是否已开启
+
+### macOS 阻止 helper 启动
+
+执行：
 
 ```bash
 xattr -dr com.apple.quarantine /path/to/extracted/zotero_copilot_0.3.0_helper_macos_arm64
 ```
 
 然后回到 Zotero 偏好设置里重新选择 helper，并再次测试连接。
+
+## 相关文档
+
+- [README.zh-CN.md](../README.zh-CN.md)
+- [MCP 接口总览](mcp-tools.zh-CN.md)
+- [架构说明](architecture.zh-CN.md)
+- [开发与源码安装](development.zh-CN.md)
