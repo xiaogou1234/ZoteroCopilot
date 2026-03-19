@@ -13,19 +13,15 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-如果你只是想在本地仓库之外安装已发布的 Python 包：
+这个项目不再维护 PyPI 分发。如果你需要在本地仓库之外安装 Python 包，请先在本地构建 wheel：
 
 ```bash
-pip install zoterocopilot-server
+python -m pip install build
+python -m build
+python -m pip install dist/*.whl
 ```
 
-或者：
-
-```bash
-uv tool install zoterocopilot-server
-```
-
-当前发布到 PyPI 的 distribution name 改为 `zoterocopilot-server`。第一次用这个新名字发布前，需要先在 PyPI 上创建一个 pending Trusted Publisher，并让它匹配 `xiaogou1234/ZoteroCopilot`、`.github/workflows/release.yml` 和 `pypi` 环境。
+终端用户请直接使用 GitHub Releases 中的插件和 helper 产物；Python 侧开发请使用本地源码或本地构建的 wheel。
 
 ## 构建 Zotero 插件
 

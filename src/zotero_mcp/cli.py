@@ -19,9 +19,9 @@ from zotero_mcp.runtime_env import (
 )
 from zotero_mcp.server import mcp
 
-PYPI_PACKAGE_NAME = "zoterocopilot-server"
-LEGACY_PYPI_PACKAGE_NAMES = ("zotero-mcp-server",)
-PACKAGE_DETECTION_TOKENS = (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES, "zotero-mcp")
+DISTRIBUTION_NAME = "zoterocopilot-server"
+LEGACY_DISTRIBUTION_NAMES = ("zotero-mcp-server",)
+PACKAGE_DETECTION_TOKENS = (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES, "zotero-mcp")
 
 
 def obfuscate_sensitive_value(value: str | None, keep_chars: int = 4) -> str | None:
@@ -62,7 +62,7 @@ def detect_installation_method() -> str:
     except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
         pass
 
-    for package_name in (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES):
+    for package_name in (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES):
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "show", package_name],

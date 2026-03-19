@@ -13,19 +13,15 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-If you only need the published Python package outside a local checkout:
+No PyPI distribution is maintained for this project. If you need an installable Python package outside a local checkout, build a wheel locally:
 
 ```bash
-pip install zoterocopilot-server
+python -m pip install build
+python -m build
+python -m pip install dist/*.whl
 ```
 
-or:
-
-```bash
-uv tool install zoterocopilot-server
-```
-
-The published PyPI distribution name is `zoterocopilot-server`. Before the first PyPI release under this name, create a pending Trusted Publisher on PyPI that matches `xiaogou1234/ZoteroCopilot`, `.github/workflows/release.yml`, and the `pypi` environment.
+Use GitHub Releases for end-user plugin and helper downloads. Use a local checkout or locally built wheel for Python-side development.
 
 ## Build the Zotero Plugin
 

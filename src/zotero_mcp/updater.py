@@ -22,9 +22,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-PYPI_PACKAGE_NAME = "zoterocopilot-server"
-LEGACY_PYPI_PACKAGE_NAMES = ("zotero-mcp-server",)
-PACKAGE_DETECTION_TOKENS = (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES, "zotero-mcp")
+DISTRIBUTION_NAME = "zoterocopilot-server"
+LEGACY_DISTRIBUTION_NAMES = ("zotero-mcp-server",)
+PACKAGE_DETECTION_TOKENS = (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES, "zotero-mcp")
 
 
 def _is_uv_tool_installation() -> bool:
@@ -130,7 +130,7 @@ def get_current_version() -> str | None:
         return __version__
     except ImportError:
         # Fallback to pip show
-        for package_name in (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES):
+        for package_name in (DISTRIBUTION_NAME, *LEGACY_DISTRIBUTION_NAMES):
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "pip", "show", package_name],
@@ -150,24 +150,11 @@ def get_current_version() -> str | None:
 
 
 def get_latest_version() -> str | None:
-    """Get the latest version from PyPI (with GitHub releases as fallback)."""
+    """Get the latest version from GitHub releases."""
     if not requests:
-        logger.warning("requests library not available, cannot check for updates")
+        logger.warning("requests library not available, cannot check GitHub releases")
         return None
 
-    # Try PyPI first
-    try:
-        response = requests.get(
-            f"https://pypi.org/pypi/{PYPI_PACKAGE_NAME}/json",
-            timeout=10
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("info", {}).get("version")
-    except Exception as e:
-        logger.warning(f"Could not fetch latest version from PyPI: {e}")
-
-    # Fallback to GitHub releases
     try:
         response = requests.get(
             "https://api.github.com/repos/xiaogou1234/ZoteroCopilot/releases/latest",
@@ -278,7 +265,7 @@ def update_via_method(method: str, force: bool = False) -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
-    package_name = PYPI_PACKAGE_NAME
+    package_name = DISTRIBUTION_NAME
 
     try:
         if method == "uv":
