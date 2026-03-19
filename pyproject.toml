@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "zotero-mcp-server"
+name = "zoterocopilot-server"
 dynamic = ["version"]
 authors = [
   { name = "xiaogou1234" },

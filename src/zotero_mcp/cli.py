@@ -19,6 +19,10 @@ from zotero_mcp.runtime_env import (
 )
 from zotero_mcp.server import mcp
 
+PYPI_PACKAGE_NAME = "zoterocopilot-server"
+LEGACY_PYPI_PACKAGE_NAMES = ("zotero-mcp-server",)
+PACKAGE_DETECTION_TOKENS = (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES, "zotero-mcp")
+
 
 def obfuscate_sensitive_value(value: str | None, keep_chars: int = 4) -> str | None:
     """Obfuscate sensitive values by showing only the first few characters."""
@@ -53,22 +57,23 @@ def detect_installation_method() -> str:
             text=True,
             timeout=5,
         )
-        if "zotero-mcp-server" in result.stdout or "zotero-mcp" in result.stdout:
+        if any(token in result.stdout for token in PACKAGE_DETECTION_TOKENS):
             return "uv tool"
     except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
         pass
 
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", "zotero-mcp-server"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return "pip"
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
-        pass
+    for package_name in (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES):
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "show", package_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return "pip"
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+            pass
 
     return "unknown"
 

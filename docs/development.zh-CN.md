@@ -16,14 +16,16 @@ python -m pip install -e ".[dev]"
 如果你只是想在本地仓库之外安装已发布的 Python 包：
 
 ```bash
-pip install zotero-mcp-server
+pip install zoterocopilot-server
 ```
 
 或者：
 
 ```bash
-uv tool install zotero-mcp-server
+uv tool install zoterocopilot-server
 ```
+
+当前发布到 PyPI 的 distribution name 改为 `zoterocopilot-server`。第一次用这个新名字发布前，需要先在 PyPI 上创建一个 pending Trusted Publisher，并让它匹配 `xiaogou1234/ZoteroCopilot`、`.github/workflows/release.yml` 和 `pypi` 环境。
 
 ## 构建 Zotero 插件
 

@@ -16,14 +16,16 @@ python -m pip install -e ".[dev]"
 If you only need the published Python package outside a local checkout:
 
 ```bash
-pip install zotero-mcp-server
+pip install zoterocopilot-server
 ```
 
 or:
 
 ```bash
-uv tool install zotero-mcp-server
+uv tool install zoterocopilot-server
 ```
+
+The published PyPI distribution name is `zoterocopilot-server`. Before the first PyPI release under this name, create a pending Trusted Publisher on PyPI that matches `xiaogou1234/ZoteroCopilot`, `.github/workflows/release.yml`, and the `pypi` environment.
 
 ## Build the Zotero Plugin
 

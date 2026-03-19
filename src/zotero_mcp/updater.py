@@ -22,6 +22,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+PYPI_PACKAGE_NAME = "zoterocopilot-server"
+LEGACY_PYPI_PACKAGE_NAMES = ("zotero-mcp-server",)
+PACKAGE_DETECTION_TOKENS = (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES, "zotero-mcp")
+
 
 def _is_uv_tool_installation() -> bool:
     """Check if zotero-mcp is currently installed as a uv tool."""
@@ -35,8 +39,8 @@ def _is_uv_tool_installation() -> bool:
             text=True,
             timeout=10,
         )
-        return result.returncode == 0 and (
-            "zotero-mcp-server" in result.stdout or "zotero-mcp" in result.stdout
+        return result.returncode == 0 and any(
+            token in result.stdout for token in PACKAGE_DETECTION_TOKENS
         )
     except Exception:
         return False
@@ -111,7 +115,7 @@ def is_pipx_installation() -> bool:
         )
 
         if result.returncode == 0:
-            return "zotero-mcp-server" in result.stdout or "zotero-mcp" in result.stdout
+            return any(token in result.stdout for token in PACKAGE_DETECTION_TOKENS)
 
     except Exception:
         pass
@@ -126,20 +130,21 @@ def get_current_version() -> str | None:
         return __version__
     except ImportError:
         # Fallback to pip show
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "show", "zotero-mcp-server"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+        for package_name in (PYPI_PACKAGE_NAME, *LEGACY_PYPI_PACKAGE_NAMES):
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "show", package_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
 
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    if line.startswith("Version:"):
-                        return line.split(":", 1)[1].strip()
-        except Exception:
-            pass
+                if result.returncode == 0:
+                    for line in result.stdout.split("\n"):
+                        if line.startswith("Version:"):
+                            return line.split(":", 1)[1].strip()
+            except Exception:
+                pass
 
     return None
 
@@ -153,7 +158,7 @@ def get_latest_version() -> str | None:
     # Try PyPI first
     try:
         response = requests.get(
-            "https://pypi.org/pypi/zotero-mcp-server/json",
+            f"https://pypi.org/pypi/{PYPI_PACKAGE_NAME}/json",
             timeout=10
         )
         if response.status_code == 200:
@@ -273,13 +278,13 @@ def update_via_method(method: str, force: bool = False) -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
-    package_name = "zotero-mcp-server"
+    package_name = PYPI_PACKAGE_NAME
 
     try:
         if method == "uv":
             if _is_uv_tool_installation():
                 upgrade_result = subprocess.run(
-                    ["uv", "tool", "upgrade", "zotero-mcp-server"],
+                    ["uv", "tool", "upgrade", package_name],
                     capture_output=True,
                     text=True,
                     timeout=300,
@@ -300,7 +305,7 @@ def update_via_method(method: str, force: bool = False) -> tuple[bool, str]:
             # First try to upgrade, if that fails, reinstall
             try:
                 result = subprocess.run(
-                    ["pipx", "upgrade", "zotero-mcp-server"],
+                    ["pipx", "upgrade", package_name],
                     capture_output=True,
                     text=True,
                     timeout=300

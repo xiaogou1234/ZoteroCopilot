@@ -31,7 +31,7 @@ COLLECT_PACKAGES = (
 )
 
 COPY_METADATA = (
-    "zotero-mcp-server",
+    "zoterocopilot-server",
     "setuptools",
     "fastmcp",
     "mcp",
