@@ -136,17 +136,6 @@ ZoteroCopilot uses a three-part local architecture:
 
 See [docs/architecture.md](docs/architecture.md) for the concise architecture overview.
 
-## Public Distribution Notes
-
-- The helper is still built as `onedir` internally.
-- Public releases are archives, not bare folders.
-- End users must extract the full helper directory before selecting the executable in Zotero.
-- On macOS, if the helper is blocked after extraction, remove quarantine on the extracted directory:
-
-```bash
-xattr -dr com.apple.quarantine /path/to/extracted/zotero_copilot_0.3.0_helper_macos_arm64
-```
-
 ## Development
 
 Repository layout:
