@@ -1,4 +1,5 @@
 # ZoteroCopilot
+English | [简体中文](./README.zh-CN.md)
 
 ZoteroCopilot seamlessly connects AI assistants to your local Zotero library for hands-free literature management.
 
