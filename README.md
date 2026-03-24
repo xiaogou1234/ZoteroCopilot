@@ -12,9 +12,8 @@ ZoteroCopilot seamlessly connects AI assistants to your local Zotero library for
 ## Install for End Users
 
 1. Open the [GitHub Releases page](https://github.com/xiaogou1234/ZoteroCopilot/releases).
-2. Download the XPI that matches your Zotero major version:
+2. Download the XPI of Zotero 7:
    - `zotero_copilot_0.3.0_zotero7_plugin.xpi`
-   - `zotero_copilot_0.3.0_zotero8_plugin.xpi`
 3. Download the helper archive for your platform:
    - macOS 11+ (Apple Silicon, `arm64`): `zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
    - Windows 10+ (`x64`): `zotero_copilot_0.3.0_helper_windows_x64.zip`
