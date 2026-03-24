@@ -7,7 +7,6 @@ ZoteroCopilot seamlessly connects AI assistants to your local Zotero library for
 - 🔎 Search a local Zotero library by keyword, tag, collection, note, and recent item state
 - 📚 Read item metadata, notes, child items, tags, and available full text
 - ✍️ Support local write operations through the Zotero desktop bridge
-- 🔌 Expose ChatGPT connector-compatible `search` and `fetch` tools
 - 🗂️ Automatically organize and categorize literature
 
 ## Install for End Users
