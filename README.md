@@ -1,6 +1,6 @@
 # ZoteroCopilot
 
-ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for working with a local Zotero library from MCP clients.
+ZoteroCopilot seamlessly connects AI assistants to your local Zotero library for hands-free literature management.
 
 ## What It Does
 
@@ -8,8 +8,7 @@ ZoteroCopilot is a local-first MCP adapter plus Zotero desktop bridge for workin
 - 📚 Read item metadata, notes, child items, tags, and available full text
 - ✍️ Support local write operations through the Zotero desktop bridge
 - 🔌 Expose ChatGPT connector-compatible `search` and `fetch` tools
-
-`0.3.0` no longer includes semantic search or vector-database tooling. The public `search` wrapper now performs local keyword search.
+- 🗂️ Automatically organize and categorize literature
 
 ## Install for End Users
 
