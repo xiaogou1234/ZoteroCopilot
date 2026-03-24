@@ -1,15 +1,13 @@
 # ZoteroCopilot
 
-ZoteroCopilot 是一个面向本地 Zotero 文库的 MCP 适配层与 Zotero 桌面 bridge 方案，供 MCP 客户端通过本地 helper 访问你的 Zotero 数据。
+ZoteroCopilot 将 AI 助手与你的本地 Zotero 文献库无缝衔接，实现解放双手的文献自动化管理。
 
 ## 主要能力
 
 - 🔎 按关键词、标签、集合、note 和最近条目检索本地 Zotero 文库
 - 📚 读取条目 metadata、notes、child items、tags 和可用全文
 - ✍️ 通过 Zotero 桌面 bridge 执行本地写操作
-- 🔌 提供兼容 ChatGPT connectors 的 `search` 与 `fetch`
-
-`0.3.0` 已移除语义搜索和向量数据库能力。公开的 `search` 接口现在固定走本地关键词检索。
+- 🗂️ 实现文献资料的自动组织与智能化归类。
 
 ## 用户安装
 
