@@ -12,7 +12,7 @@ ZoteroCopilot 将 AI 助手与你的本地 Zotero 文献库无缝衔接，实现
 ## 用户安装
 
 1. 打开 [GitHub Releases 页面](https://github.com/xiaogou1234/ZoteroCopilot/releases)。
-2. 下载与你当前 Zotero7 的插件包：
+2. 下载 Zotero7 的插件包：
    - `zotero_copilot_0.3.0_zotero7_plugin.xpi`
 3. 下载与你平台匹配的 helper 归档：
    - macOS 11+（Apple Silicon，`arm64`）：`zotero_copilot_0.3.0_helper_macos_arm64.tar.gz`
